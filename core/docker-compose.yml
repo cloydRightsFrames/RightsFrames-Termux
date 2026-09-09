@@ -1,0 +1,9 @@
+services:
+  rightsframes-core:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - rf_data:/data
+volumes:
+  rf_data:
