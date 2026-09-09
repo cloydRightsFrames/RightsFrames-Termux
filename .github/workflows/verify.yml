@@ -1,0 +1,33 @@
+name: Verify Ledger Integrity
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r core/requirements.txt
+      - name: Smoke test - chain, anchor, tamper detection
+        run: |
+          cd core
+          export RF_DATA_DIR=/tmp/ci_test
+          python3 -c "
+          import rf_core
+          rf_core.init_db()
+          rf_core.append_entry('test', {'msg': 'ci'})
+          ok, msg = rf_core.verify_chain()
+          assert ok, f'chain failed: {msg}'
+          ok, msg = rf_core.create_anchor()
+          assert ok, f'anchor failed: {msg}'
+          ok, msg = rf_core.verify_anchors()
+          assert ok, f'anchor verify failed: {msg}'
+          import sqlite3
+          conn = sqlite3.connect(rf_core.LEDGER_DB)
+          conn.execute(\"UPDATE ledger_entries SET payload='{\\\"x\\\":1}' WHERE id=1\")
+          conn.commit(); conn.close()
+          ok, msg = rf_core.verify_chain()
+          assert not ok, 'TAMPER WAS NOT DETECTED -- this is a real security failure'
+          print('All checks passed, tamper correctly detected')
+          "
