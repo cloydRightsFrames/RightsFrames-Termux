@@ -64,6 +64,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          test -z "$(git status --porcelain=v1)"
+          mkdir -p dist/source-integrity
+          printf "%s\n" "${GITHUB_SHA}" > dist/source-integrity/source.sha256
+          git rev-parse HEAD^{tree} > dist/source-integrity/source.tree
+          git show -s --format="%H%n%T%n%P%n%ct%n%s" HEAD > dist/source-integrity/source.commit
+        shell: bash
+        run: |
+          set -euo pipefail
           printf '%s\n' "${GITHUB_SHA}" > source.sha256
           git rev-parse HEAD^{tree} > source.tree
           git show -s --format='%H%n%T%n%P%n%ct%n%s' HEAD > source.commit
