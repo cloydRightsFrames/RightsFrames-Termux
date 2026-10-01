@@ -18,6 +18,42 @@ esac
 mkdir -p "$TMP"
 trap 'rm -rf "$TMP"' EXIT
 
+REMOTE_TAG_OBJECT="$(git ls-remote "https://github.com/${REPO}.git" "refs/tags/${TAG}" | awk '{print $1}')"
+REMOTE_TAG_TARGET="$(git ls-remote "https://github.com/${REPO}.git" "refs/tags/${TAG}^{}" | awk '{print $1}')"
+
+[ "${#REMOTE_TAG_OBJECT}" -eq 40 ]
+[ "${#REMOTE_TAG_TARGET}" -eq 40 ]
+
+RELEASE_JSON="$(GH_PAGER=cat gh release view "$TAG" --repo "$REPO" --json tagName,targetCommitish,isDraft,isPrerelease,publishedAt,assets,url)"
+
+python3 - "$RELEASE_JSON" "$TAG" <<'PY'
+import json
+import sys
+
+r = json.loads(sys.argv[1])
+tag = sys.argv[2]
+
+assert r["tagName"] == tag
+assert r["isDraft"] is False
+assert r["isPrerelease"] is False
+assert r["publishedAt"]
+assert r["url"]
+
+required = {
+    f"RightsFrames-Termux-{tag}.tar.gz",
+    "SHA256SUMS",
+    "release-manifest.json",
+}
+
+names = {a["name"] for a in r["assets"]}
+assert required.issubset(names)
+assert all(a["state"] == "uploaded" for a in r["assets"])
+
+print("RELEASE_OBJECT=VERIFIED")
+PY
+
+trap 'rm -rf "$TMP"' EXIT
+
 GH_PAGER=cat gh release download "$TAG" \
     --repo "$REPO" \
     --pattern 'RightsFrames-Termux-*.tar.gz' \
@@ -34,7 +70,7 @@ test -s "$TMP/SHA256SUMS"
 
 sha256sum -c "$TMP/SHA256SUMS"
 
-python3 - "$MANIFEST" "$ART" "$REPO" "$TAG" <<'PY'
+python3 - "$MANIFEST" "$ART" "$REPO" "$TAG" "$REMOTE_TAG_TARGET" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -44,10 +80,12 @@ manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
 artifact = pathlib.Path(sys.argv[2])
 repo = sys.argv[3]
 tag = sys.argv[4]
+tag_target = sys.argv[5]
 
 digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
 
 assert manifest["repository"] == repo
+assert manifest["commit"] == tag_target
 assert manifest["tag"] == tag
 assert manifest["ref"] == f"refs/tags/{tag}"
 assert manifest["artifact"] == artifact.name
@@ -63,6 +101,7 @@ print(f"COMMIT={manifest['commit']}")
 print(f"TREE={manifest['tree']}")
 print(f"SHA256={digest}")
 print("REPRODUCIBILITY=VERIFIED")
+print("TAG_TO_MANIFEST=VERIFIED")
 PY
 
 GH_PAGER=cat gh attestation verify \
