@@ -298,7 +298,10 @@ jobs:
           set -euo pipefail
           ART="dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
           test -s "$ART"
-          sha256sum -c dist/SHA256SUMS
+          (
+            cd dist
+            sha256sum -c SHA256SUMS
+          )
 
       - name: Generate GitHub artifact attestation
         uses: actions/attest@v4
