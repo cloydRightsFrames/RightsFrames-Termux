@@ -156,7 +156,7 @@ jobs:
             "$ART" \
             --repo "$REPO" \
             --predicate-type 'https://slsa.dev/provenance/v1' \
-            --signer-workflow "${REPO}/.github/workflows/provenance-gate.yml" \
+            --signer-workflow "${REPO}/.github/workflows/slsa-build-l3.yml" \
             --source-ref "refs/tags/$TAG" \
             --deny-self-hosted-runners
 
