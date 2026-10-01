@@ -287,6 +287,7 @@ jobs:
       contents: read
       id-token: write
       attestations: write
+      artifact-metadata: write
     uses: ./.github/workflows/slsa-build-l3.yml
     with:
       artifact_name: RightsFrames-Termux-${{ github.ref_name }}.tar.gz
