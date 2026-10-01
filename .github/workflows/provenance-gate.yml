@@ -289,7 +289,7 @@ jobs:
       - name: Download canonical artifact
         uses: actions/download-artifact@v4
         with:
-          name: rightsframes-canonical-${{ github.sha }}
+          name: rightsframes-slsa3-${{ github.sha }}
           path: dist
 
       - name: Verify canonical artifact before attestation
@@ -330,6 +330,8 @@ jobs:
               "artifact": "${ART}",
               "sha256": "${DIGEST}",
               "predicateType": "https://slsa.dev/provenance/v1",
+              "slsaBuildLevel": 3,
+              "signerWorkflow": "${GITHUB_REPOSITORY}/.github/workflows/slsa-build-l3.yml",
               "workflow": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
               "workflowRef": "${GITHUB_WORKFLOW_REF}",
               "runId": "${GITHUB_RUN_ID}",
