@@ -106,6 +106,23 @@ jobs:
           PY
           fi
 
+  zero-trust-policy:
+    name: Zero trust supply-chain policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify supply-chain controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/verify_supply_chain_policy.py
+
   build-a:
     name: Reproducible build A
     needs:
