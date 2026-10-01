@@ -21,6 +21,10 @@ trap 'rm -rf "$TMP"' EXIT
 REMOTE_TAG_OBJECT="$(git ls-remote "https://github.com/${REPO}.git" "refs/tags/${TAG}" | awk '{print $1}')"
 REMOTE_TAG_TARGET="$(git ls-remote "https://github.com/${REPO}.git" "refs/tags/${TAG}^{}" | awk '{print $1}')"
 
+if [ -z "$REMOTE_TAG_TARGET" ]; then
+  REMOTE_TAG_TARGET="$REMOTE_TAG_OBJECT"
+fi
+
 [ "${#REMOTE_TAG_OBJECT}" -eq 40 ]
 [ "${#REMOTE_TAG_TARGET}" -eq 40 ]
 
