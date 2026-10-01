@@ -20,7 +20,6 @@ required = {
         'id-token: write',
         'attestations: write',
         'artifact-metadata: write',
-        'actions/attest@v4',
         'git archive',
         'gzip -n',
     ],
@@ -48,6 +47,13 @@ for p in sorted(WF.glob('*.yml')):
         raise SystemExit(f'UNTRUSTED_RUNNER_REFERENCE={p.name}')
     if re.search(r'uses:\s*[^\s@]+@main(?:\s|$)', s):
         raise SystemExit(f'MUTABLE_ACTION_REF={p.name}:main')
+
+    for action, ref in re.findall(r'uses:\s*([^\s@]+)@([^\s#]+)', s):
+        if action == 'actions/attest':
+            if not re.fullmatch(r'[0-9a-fA-F]{40}', ref):
+                raise SystemExit(
+                    f'NON_IMMUTABLE_ATTEST_REF={p.name}:{action}@{ref}'
+                )
 
 print('RIGHTSFRAMES_ZERO_TRUST_POLICY=PASS')
 print('SLSA_BUILD_L3_CONTROLS=PASS')
