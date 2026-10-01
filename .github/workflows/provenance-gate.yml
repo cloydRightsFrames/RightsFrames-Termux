@@ -390,7 +390,10 @@ jobs:
           test -s dist/SHA256SUMS
           test -s dist/release-manifest.json
 
-          sha256sum -c dist/SHA256SUMS
+          (
+            cd dist
+            sha256sum -c SHA256SUMS
+          )
 
           python3 - <<PY
           import json
