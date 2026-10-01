@@ -1,0 +1,169 @@
+name: RightsFrames Continuous Release Integrity
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: read
+
+concurrency:
+  group: rightsframes-release-integrity
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Independent release verifier
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout verifier
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install verifier prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v gh
+          command -v git
+          command -v python3
+          gh --version
+          gh attestation verify --help >/dev/null
+
+      - name: Select release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName --jq '.tagName')"
+          case "$TAG" in
+            v*) ;;
+            *) echo 'no versioned release found'; exit 1 ;;
+          esac
+          printf '%s\n' "$TAG" > "${RUNNER_TEMP}/rightsframes-release-tag"
+
+      - name: Verify release, tag, assets, manifest, and attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="$(cat "${RUNNER_TEMP}/rightsframes-release-tag")"
+          REPO="${GITHUB_REPOSITORY}"
+          TMP="${RUNNER_TEMP}/rightsframes-release"
+          mkdir -p "$TMP"
+
+          RELEASE_JSON="$(gh release view "$TAG" --repo "$REPO" --json tagName,targetCommitish,isDraft,isPrerelease,publishedAt,assets,url)"
+
+          python3 - "$RELEASE_JSON" "$TAG" <<'PY'
+          import json
+          import sys
+
+          r = json.loads(sys.argv[1])
+          tag = sys.argv[2]
+
+          assert r["tagName"] == tag
+          assert r["isDraft"] is False
+          assert r["isPrerelease"] is False
+          assert r["publishedAt"]
+          assert r["url"]
+
+          names = {a["name"] for a in r["assets"]}
+          required = {
+              f"RightsFrames-Termux-{tag}.tar.gz",
+              "SHA256SUMS",
+              "release-manifest.json",
+          }
+
+          assert required.issubset(names)
+          assert all(a["state"] == "uploaded" for a in r["assets"])
+
+          print("RELEASE_OBJECT=PASS")
+          print("ASSETS_PRESENT=PASS")
+          PY
+
+          REMOTE_TAG_OBJECT="$(git ls-remote origin "refs/tags/$TAG" | awk '{print $1}')"
+          REMOTE_TAG_TARGET="$(git ls-remote origin "refs/tags/$TAG^{}" | awk '{print $1}')"
+
+          test -n "$REMOTE_TAG_OBJECT"
+          test -n "$REMOTE_TAG_TARGET"
+          test "${#REMOTE_TAG_OBJECT}" -eq 40
+          test "${#REMOTE_TAG_TARGET}" -eq 40
+
+          gh release download "$TAG" \
+            --repo "$REPO" \
+            --pattern "RightsFrames-Termux-$TAG.tar.gz" \
+            --pattern "SHA256SUMS" \
+            --pattern "release-manifest.json" \
+            --dir "$TMP"
+
+          ART="$TMP/RightsFrames-Termux-$TAG.tar.gz"
+
+          test -s "$ART"
+          test -s "$TMP/SHA256SUMS"
+          test -s "$TMP/release-manifest.json"
+
+          (
+            cd "$TMP"
+            sha256sum -c SHA256SUMS
+          )
+
+          python3 - "$TMP/release-manifest.json" "$ART" "$REPO" "$TAG" "$REMOTE_TAG_TARGET" <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import sys
+
+          manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          artifact = pathlib.Path(sys.argv[2])
+          repo = sys.argv[3]
+          tag = sys.argv[4]
+          tag_target = sys.argv[5]
+
+          digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+
+          assert manifest["repository"] == repo
+          assert manifest["tag"] == tag
+          assert manifest["ref"] == f"refs/tags/{tag}"
+          assert manifest["commit"] == tag_target
+          assert manifest["artifact"] == artifact.name
+          assert manifest["sha256"] == digest
+          assert manifest["predicateType"] == "https://slsa.dev/provenance/v1"
+          assert manifest["reproducible"] is True
+          assert manifest["independentBuilds"] == 2
+          assert len(manifest["commit"]) == 40
+          assert len(manifest["tree"]) == 40
+
+          print("TAG_TO_MANIFEST=PASS")
+          print("MANIFEST_TO_ARTIFACT=PASS")
+          print("REPRODUCIBILITY_CLAIM=PASS")
+          PY
+
+          gh attestation verify \
+            "$ART" \
+            --repo "$REPO" \
+            --predicate-type 'https://slsa.dev/provenance/v1' \
+            --signer-workflow "${REPO}/.github/workflows/provenance-gate.yml" \
+            --source-ref "refs/tags/$TAG" \
+            --deny-self-hosted-runners
+
+          printf '%s\n' \
+            'RIGHTSFRAMES_CONTINUOUS_RELEASE_INTEGRITY=PASS' \
+            "TAG=$TAG" \
+            "TAG_OBJECT=$REMOTE_TAG_OBJECT" \
+            "TAG_TARGET=$REMOTE_TAG_TARGET" \
+            "ARTIFACT=$(sha256sum "$ART" | awk '{print $1}')" \
+            'SLSA_ATTESTATION=PASS'
