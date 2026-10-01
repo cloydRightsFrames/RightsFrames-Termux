@@ -68,7 +68,10 @@ test -s "$ART"
 test -s "$MANIFEST"
 test -s "$TMP/SHA256SUMS"
 
-sha256sum -c "$TMP/SHA256SUMS"
+(
+    cd "$TMP"
+    sha256sum -c SHA256SUMS
+)
 
 python3 - "$MANIFEST" "$ART" "$REPO" "$TAG" "$REMOTE_TAG_TARGET" <<'PY'
 import hashlib
