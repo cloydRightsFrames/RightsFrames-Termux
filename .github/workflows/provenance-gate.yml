@@ -277,6 +277,21 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  slsa3-build:
+    name: SLSA Build L3 trusted builder
+    needs:
+      - source-integrity
+      - test
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/slsa-build-l3.yml
+    with:
+      artifact_name: RightsFrames-Termux-${{ github.ref_name }}.tar.gz
+      bundle_name: rightsframes-slsa3-${{ github.sha }}
+
   provenance:
     name: External SLSA provenance
     needs:
