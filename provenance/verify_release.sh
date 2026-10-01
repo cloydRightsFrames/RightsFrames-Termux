@@ -1,89 +1,81 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 
-OWNER=${1:?owner required}
-REPO=${2:?repo required}
-TAG=${3:?tag required}
-ARTIFACT=${4:?artifact required}
+REPO="${1:-cLoydRightsFrames/RightsFrames-Termux}"
+TAG="${2:-}"
+TMP="${TMPDIR:-$HOME/tmp}/rf-release-verify-${TAG:-unknown}-$$"
 
-REPO_FULL="${OWNER}/${REPO}"
-BASE="https://github.com/${REPO_FULL}"
-
-command -v gh >/dev/null
-command -v sha256sum >/dev/null
-command -v python3 >/dev/null
-
-test -f "$ARTIFACT"
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-
-MANIFEST="${TMP}/release-manifest.json"
-
-gh api \
-  "repos/${REPO_FULL}/releases/tags/${TAG}" \
-  > "${TMP}/release.json"
-
-python3 - "${TMP}/release.json" "$MANIFEST" "$ARTIFACT" "$REPO_FULL" "$TAG" <<'PY'
-import json
-import sys
-
-release=json.load(open(sys.argv[1],encoding='utf-8'))
-manifest={
-    "repository":sys.argv[4],
-    "tag":sys.argv[5],
-    "artifact":sys.argv[3],
+[ -n "$TAG" ] || {
+    printf '%s\n' 'usage: verify_release.sh OWNER/REPO vX.Y.Z'
+    exit 2
 }
 
-assets=release.get("assets",[])
-target=next((x for x in assets if x["name"]=="release-manifest.json"),None)
+case "$TAG" in
+    v*) ;;
+    *) exit 2 ;;
+esac
 
-if target is None:
-    raise SystemExit("release-manifest.json missing")
+mkdir -p "$TMP"
+trap 'rm -rf "$TMP"' EXIT
 
-import urllib.request
-with urllib.request.urlopen(target["browser_download_url"]) as r:
-    data=r.read()
+GH_PAGER=cat gh release download "$TAG" \
+    --repo "$REPO" \
+    --pattern 'RightsFrames-Termux-*.tar.gz' \
+    --pattern 'SHA256SUMS' \
+    --pattern 'release-manifest.json' \
+    --dir "$TMP"
 
-open(sys.argv[2],"wb").write(data)
+ART="$(find "$TMP" -maxdepth 1 -type f -name 'RightsFrames-Termux-*.tar.gz' | head -n1)"
+MANIFEST="$TMP/release-manifest.json"
 
-m=json.loads(data)
+test -s "$ART"
+test -s "$MANIFEST"
+test -s "$TMP/SHA256SUMS"
 
-for k,v in manifest.items():
-    if m.get(k)!=v:
-        raise SystemExit(f"manifest mismatch: {k}")
+sha256sum -c "$TMP/SHA256SUMS"
 
-if m.get("predicateType")!="https://slsa.dev/provenance/v1":
-    raise SystemExit("unexpected predicate type")
+python3 - "$MANIFEST" "$ART" "$REPO" "$TAG" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
 
-if not m.get("commit"):
-    raise SystemExit("missing immutable commit")
+manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+artifact = pathlib.Path(sys.argv[2])
+repo = sys.argv[3]
+tag = sys.argv[4]
 
-if not m.get("sha256"):
-    raise SystemExit("missing subject digest")
+digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+
+assert manifest["repository"] == repo
+assert manifest["tag"] == tag
+assert manifest["ref"] == f"refs/tags/{tag}"
+assert manifest["artifact"] == artifact.name
+assert manifest["sha256"] == digest
+assert manifest["predicateType"] == "https://slsa.dev/provenance/v1"
+assert manifest["reproducible"] is True
+assert manifest["independentBuilds"] == 2
+assert len(manifest["commit"]) == 40
+assert len(manifest["tree"]) == 40
+
+print("RELEASE_MANIFEST=VERIFIED")
+print(f"COMMIT={manifest['commit']}")
+print(f"TREE={manifest['tree']}")
+print(f"SHA256={digest}")
+print("REPRODUCIBILITY=VERIFIED")
 PY
 
-EXPECTED="$(python3 - "$MANIFEST" <<'PY'
-import json,sys
-print(json.load(open(sys.argv[1],encoding='utf-8'))["sha256"])
-PY
-)"
+GH_PAGER=cat gh attestation verify \
+    "$ART" \
+    --repo "$REPO" \
+    --predicate-type 'https://slsa.dev/provenance/v1' \
+    --signer-workflow "${REPO}/.github/workflows/provenance-gate.yml" \
+    --source-ref "refs/tags/${TAG}" \
+    --deny-self-hosted-runners
 
-ACTUAL="$(sha256sum "$ARTIFACT" | awk '{print $1}')"
-
-test "$ACTUAL" = "$EXPECTED"
-
-gh attestation verify \
-  "$ARTIFACT" \
-  --repo "$REPO_FULL" \
-  --predicate-type 'https://slsa.dev/provenance/v1' \
-  --signer-workflow "${REPO_FULL}/.github/workflows/provenance-gate.yml" \
-  --source-ref "refs/tags/${TAG}" \
-  --deny-self-hosted-runners
-
-printf '%s\n' 'RIGHTSFRAMES_PROVENANCE=VERIFIED'
-printf '%s\n' "REPOSITORY=${REPO_FULL}"
-printf '%s\n' "TAG=${TAG}"
-printf '%s\n' "SHA256=${ACTUAL}"
-printf '%s\n' 'EXTERNAL_ATTESTATION=VERIFIED'
-printf '%s\n' 'INDEPENDENT_VERIFICATION=PASSED'
+printf '%s\n' \
+    'RIGHTSFRAMES_PROVENANCE=VERIFIED' \
+    'RELEASE_ARTIFACT=VERIFIED' \
+    'RELEASE_MANIFEST=VERIFIED' \
+    'SLSA_ATTESTATION=VERIFIED' \
+    'INDEPENDENT_VERIFIER=PASSED'

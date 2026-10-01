@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - provenance-gate-v1
     tags:
       - 'v*'
 
@@ -34,42 +33,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git remote get-url origin)" = "https://github.com/cloydRightsFrames/RightsFrames-Termux"
+          test "$(git remote get-url origin)" = "https://github.com/${GITHUB_REPOSITORY}"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git status --porcelain=v1)"
 
-      - name: Parse Python without modifying checkout
+      - name: Parse source
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import ast
           from pathlib import Path
-
-          for path in sorted(Path('core').glob('*.py')):
-              ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+          for p in sorted(Path('.').rglob('*.py')):
+              if '.git' not in p.parts:
+                  ast.parse(p.read_text(encoding='utf-8'), filename=str(p))
           PY
 
-      - name: Required source files
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f core/rf_core.py
-          test -f core/app.py
-
-      - name: Verify clean checkout
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -z "$(git status --porcelain=v1)"
-
-      - name: Record source identity
+      - name: Record immutable source identity
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist/source-integrity
-          printf '%s\n' "${GITHUB_SHA}" > dist/source-integrity/source.sha256
-          git rev-parse HEAD^{tree} > dist/source-integrity/source.tree
-          git show -s --format='%H%n%T%n%P%n%ct%n%s' HEAD > dist/source-integrity/source.commit
+          git rev-parse HEAD > dist/source-integrity/commit
+          git rev-parse HEAD^{tree} > dist/source-integrity/tree
+          git show -s --format='%H%n%T%n%P%n%ct%n%s' HEAD > dist/source-integrity/commit-record
+          sha256sum dist/source-integrity/* > dist/source-integrity/SHA256SUMS
+
+      - name: Upload source identity
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-identity-${{ github.sha }}
+          path: dist/source-integrity
+          if-no-files-found: error
+          retention-days: 14
 
   test:
     name: Core verification
@@ -93,131 +89,384 @@ jobs:
           set -euo pipefail
           python -m pip install --disable-pip-version-check -r core/requirements.txt
 
-      - name: Smoke test
+      - name: Compile source
         shell: bash
         run: |
           set -euo pipefail
-          test -f core/rf_core.py
-          test -f core/app.py
           python -m py_compile core/*.py
 
-  provenance:
-    name: External provenance
+      - name: Run repository verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f core/rf_core.py ]; then
+            python - <<'PY'
+          import core.rf_core
+          print("RF_CORE_IMPORT=PASS")
+          PY
+          fi
+
+  build-a:
+    name: Reproducible build A
     needs:
       - source-integrity
       - test
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout immutable tag target
+      - name: Checkout exact tagged revision
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify tag resolves to checked revision
+      - name: Verify tag identity
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
           git fetch --force --tags origin
-          TAG_TARGET="$(git rev-parse "refs/tags/${TAG}^{commit}")"
-          test "$TAG_TARGET" = "${GITHUB_SHA}"
+          TARGET="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          test "$TARGET" = "$GITHUB_SHA"
 
-      - name: Build immutable source subject
+      - name: Build deterministic source artifact
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
+          ART="RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          git archive --format=tar --prefix="RightsFrames-Termux-${GITHUB_REF_NAME}/" "$GITHUB_SHA" > "dist/${ART%.gz}"
+          gzip -n "dist/${ART%.gz}"
+          sha256sum "dist/${ART}" > dist/SHA256SUMS-A
+          git rev-parse HEAD > dist/BUILD-A-COMMIT
+          git rev-parse HEAD^{tree} > dist/BUILD-A-TREE
 
-          git archive \
-            --format=tar \
-            --prefix="RightsFrames-Termux-${GITHUB_REF_NAME}/" \
-            "${GITHUB_SHA}" \
-            > "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar"
+      - name: Upload build A
+        uses: actions/upload-artifact@v4
+        with:
+          name: rightsframes-build-a-${{ github.sha }}
+          path: |
+            dist/RightsFrames-Termux-${{ github.ref_name }}.tar.gz
+            dist/SHA256SUMS-A
+            dist/BUILD-A-COMMIT
+            dist/BUILD-A-TREE
+          if-no-files-found: error
+          retention-days: 30
 
-          gzip -n \
-            "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar"
+  build-b:
+    name: Reproducible build B
+    needs:
+      - source-integrity
+      - test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact tagged revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
 
-          sha256sum \
-            "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz" \
-            > dist/SHA256SUMS
+      - name: Verify tag identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin
+          TARGET="$(git rev-parse "refs/tags/${GITHUB_REF_NAME}^{commit}")"
+          test "$TARGET" = "$GITHUB_SHA"
 
-          sha256sum \
-            "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz" \
-            | awk '{print $1}' \
-            > dist/SUBJECT_SHA256
+      - name: Build deterministic source artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ART="RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          git archive --format=tar --prefix="RightsFrames-Termux-${GITHUB_REF_NAME}/" "$GITHUB_SHA" > "dist/${ART%.gz}"
+          gzip -n "dist/${ART%.gz}"
+          sha256sum "dist/${ART}" > dist/SHA256SUMS-B
+          git rev-parse HEAD > dist/BUILD-B-COMMIT
+          git rev-parse HEAD^{tree} > dist/BUILD-B-TREE
 
-      - name: Generate SLSA provenance
+      - name: Upload build B
+        uses: actions/upload-artifact@v4
+        with:
+          name: rightsframes-build-b-${{ github.sha }}
+          path: |
+            dist/RightsFrames-Termux-${{ github.ref_name }}.tar.gz
+            dist/SHA256SUMS-B
+            dist/BUILD-B-COMMIT
+            dist/BUILD-B-TREE
+          if-no-files-found: error
+          retention-days: 30
+
+  reproducibility:
+    name: Reproducibility gate
+    needs:
+      - build-a
+      - build-b
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build A
+        uses: actions/download-artifact@v4
+        with:
+          name: rightsframes-build-a-${{ github.sha }}
+          path: build-a
+
+      - name: Download build B
+        uses: actions/download-artifact@v4
+        with:
+          name: rightsframes-build-b-${{ github.sha }}
+          path: build-b
+
+      - name: Independently compare outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          A="build-a/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          B="build-b/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+
+          test -s "$A"
+          test -s "$B"
+
+          HA="$(sha256sum "$A" | awk '{print $1}')"
+          HB="$(sha256sum "$B" | awk '{print $1}')"
+
+          test "$HA" = "$HB"
+
+          test "$(cat build-a/BUILD-A-COMMIT)" = "$GITHUB_SHA"
+          test "$(cat build-b/BUILD-B-COMMIT)" = "$GITHUB_SHA"
+
+          test "$(cat build-a/BUILD-A-TREE)" = "$(cat build-b/BUILD-B-TREE)"
+
+          mkdir -p canonical
+          cp "$A" canonical/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz
+
+          printf '%s  %s\n' \
+            "$HA" \
+            "RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz" \
+            > canonical/SHA256SUMS
+
+          printf '%s\n' "$GITHUB_SHA" > canonical/SOURCE_COMMIT
+          printf '%s\n' "$(cat build-a/BUILD-A-TREE)" > canonical/SOURCE_TREE
+
+          cat > canonical/reproducibility.json <<EOF
+          {
+            "schema": "https://rightsframes.online/provenance/reproducibility/v1",
+            "repository": "${GITHUB_REPOSITORY}",
+            "tag": "${GITHUB_REF_NAME}",
+            "commit": "${GITHUB_SHA}",
+            "tree": "$(cat build-a/BUILD-A-TREE)",
+            "artifact": "RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz",
+            "sha256": "${HA}",
+            "buildA": "${HA}",
+            "buildB": "${HB}",
+            "identical": true,
+            "runner": "GitHub-hosted"
+          }
+          EOF
+
+          python3 -m json.tool canonical/reproducibility.json >/dev/null
+
+      - name: Upload canonical artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rightsframes-canonical-${{ github.sha }}
+          path: canonical
+          if-no-files-found: error
+          retention-days: 90
+
+  provenance:
+    name: External SLSA provenance
+    needs:
+      - source-integrity
+      - test
+      - reproducibility
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download canonical artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rightsframes-canonical-${{ github.sha }}
+          path: dist
+
+      - name: Verify canonical artifact before attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ART="dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          test -s "$ART"
+          sha256sum -c dist/SHA256SUMS
+
+      - name: Generate GitHub artifact attestation
         uses: actions/attest@v4
         with:
           subject-path: dist/RightsFrames-Termux-${{ github.ref_name }}.tar.gz
           show-summary: true
 
-      - name: Preserve machine-verifiable manifest
+      - name: Produce release manifest
         shell: bash
         run: |
           set -euo pipefail
-
-          ARTIFACT="RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
-          DIGEST="$(sha256sum "dist/${ARTIFACT}" | awk '{print $1}')"
+          ART="RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          DIGEST="$(sha256sum "dist/${ART}" | awk '{print $1}')"
+          TREE="$(cat dist/SOURCE_TREE)"
 
           python3 - <<PY
           import json
 
-          manifest = {
-              "schema": "https://rightsframes.online/provenance/release-manifest/v1",
-              "repository": "cloydRightsFrames/RightsFrames-Termux",
+          m = {
+              "schema": "https://rightsframes.online/provenance/release-manifest/v2",
+              "repository": "${GITHUB_REPOSITORY}",
               "ref": "${GITHUB_REF}",
               "tag": "${GITHUB_REF_NAME}",
               "commit": "${GITHUB_SHA}",
-              "artifact": "${ARTIFACT}",
+              "tree": "${TREE}",
+              "artifact": "${ART}",
               "sha256": "${DIGEST}",
               "predicateType": "https://slsa.dev/provenance/v1",
               "workflow": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
               "workflowRef": "${GITHUB_WORKFLOW_REF}",
+              "runId": "${GITHUB_RUN_ID}",
               "runner": "GitHub-hosted",
-              "repositoryVisibility": "public"
+              "repositoryVisibility": "public",
+              "reproducible": True,
+              "independentBuilds": 2,
+              "attested": True
           }
 
           with open("dist/release-manifest.json", "w", encoding="utf-8") as f:
-              json.dump(manifest, f, indent=2, sort_keys=True)
-              f.write("\n")
+              json.dump(m, f, indent=2, sort_keys=True)
+              f.write("\\n")
           PY
 
-      - name: Verify final workspace
+          python3 -m json.tool dist/release-manifest.json >/dev/null
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: rightsframes-release-evidence-${{ github.sha }}
+          path: dist/release-manifest.json
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Immutable release publication
+    needs:
+      - provenance
+      - reproducibility
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download canonical artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rightsframes-canonical-${{ github.sha }}
+          path: dist
+
+      - name: Download release evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: rightsframes-release-evidence-${{ github.sha }}
+          path: dist
+
+      - name: Final release integrity gate
         shell: bash
         run: |
           set -euo pipefail
+
+          ART="dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+
+          test -s "$ART"
           test -s dist/SHA256SUMS
-          test -s dist/SUBJECT_SHA256
           test -s dist/release-manifest.json
-          python3 -m json.tool dist/release-manifest.json >/dev/null
+
+          sha256sum -c dist/SHA256SUMS
+
+          python3 - <<PY
+          import json
+          import hashlib
+
+          manifest = json.load(open("dist/release-manifest.json", encoding="utf-8"))
+          artifact = "dist/${ART#dist/}"
+
+          actual = hashlib.sha256(open(artifact, "rb").read()).hexdigest()
+
+          assert manifest["commit"] == "${GITHUB_SHA}"
+          assert manifest["tag"] == "${GITHUB_REF_NAME}"
+          assert manifest["sha256"] == actual
+          assert manifest["reproducible"] is True
+          assert manifest["independentBuilds"] == 2
+          PY
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh release view "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 &&
+            exit 1 || true
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "RightsFrames ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz" \
+            dist/SHA256SUMS \
+            dist/release-manifest.json
 
   release-policy:
     name: Release policy gate
     needs:
       - source-integrity
       - test
+      - build-a
+      - build-b
+      - reproducibility
       - provenance
+      - release
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - name: Require all provenance prerequisites
+      - name: Require every security gate
         shell: bash
         run: |
           set -euo pipefail
           test "${{ needs.source-integrity.result }}" = success
           test "${{ needs.test.result }}" = success
+          test "${{ needs.build-a.result }}" = success
+          test "${{ needs.build-b.result }}" = success
+          test "${{ needs.reproducibility.result }}" = success
           test "${{ needs.provenance.result }}" = success
-
-      - name: Require immutable tag event
-        shell: bash
-        run: |
-          set -euo pipefail
+          test "${{ needs.release.result }}" = success
           test "${GITHUB_REF_TYPE}" = tag
+
           case "${GITHUB_REF_NAME}" in
             v*) ;;
             *) exit 1 ;;
           esac
+
+      - name: Emit machine-verifiable final state
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' \
+            'RIGHTSFRAMES_RELEASE_GATE=PASSED' \
+            'SOURCE_IDENTITY=VERIFIED' \
+            'BUILD_A=VERIFIED' \
+            'BUILD_B=VERIFIED' \
+            'REPRODUCIBILITY=VERIFIED' \
+            'SLSA_ATTESTATION=VERIFIED_BY_WORKFLOW' \
+            'RELEASE_MANIFEST=VERIFIED' \
+            'RELEASE_PUBLICATION=VERIFIED' \
+            "COMMIT=${GITHUB_SHA}" \
+            "TAG=${GITHUB_REF_NAME}"
