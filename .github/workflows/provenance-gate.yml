@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - provenance-gate-v1
     tags:
       - 'v*'
 
@@ -43,6 +44,7 @@ jobs:
           python3 - <<'PY'
           import ast
           from pathlib import Path
+
           for path in sorted(Path('core').glob('*.py')):
               ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
           PY
@@ -54,7 +56,7 @@ jobs:
           test -f core/rf_core.py
           test -f core/app.py
 
-      - name: Clean checkout
+      - name: Verify clean checkout
         shell: bash
         run: |
           set -euo pipefail
@@ -64,22 +66,46 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -z "$(git status --porcelain=v1)"
           mkdir -p dist/source-integrity
-          printf "%s\n" "${GITHUB_SHA}" > dist/source-integrity/source.sha256
+          printf '%s\n' "${GITHUB_SHA}" > dist/source-integrity/source.sha256
           git rev-parse HEAD^{tree} > dist/source-integrity/source.tree
-          git show -s --format="%H%n%T%n%P%n%ct%n%s" HEAD > dist/source-integrity/source.commit
+          git show -s --format='%H%n%T%n%P%n%ct%n%s' HEAD > dist/source-integrity/source.commit
+
+  test:
+    name: Core verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s\n' "${GITHUB_SHA}" > source.sha256
-          git rev-parse HEAD^{tree} > source.tree
-          git show -s --format='%H%n%T%n%P%n%ct%n%s' HEAD > source.commit
-          test -z "$(git status --porcelain=v1)"
+          python -m pip install --disable-pip-version-check -r core/requirements.txt
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f core/rf_core.py
+          test -f core/app.py
+          python -m py_compile core/*.py
 
   provenance:
     name: External provenance
-    needs: source-integrity
+    needs:
+      - source-integrity
+      - test
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -104,6 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+
           git archive \
             --format=tar \
             --prefix="RightsFrames-Termux-${GITHUB_REF_NAME}/" \
@@ -112,7 +139,6 @@ jobs:
 
           gzip -n \
             "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar"
-
 
           sha256sum \
             "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz" \
@@ -173,15 +199,17 @@ jobs:
     name: Release policy gate
     needs:
       - source-integrity
+      - test
       - provenance
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - name: Require provenance completion
+      - name: Require all provenance prerequisites
         shell: bash
         run: |
           set -euo pipefail
           test "${{ needs.source-integrity.result }}" = success
+          test "${{ needs.test.result }}" = success
           test "${{ needs.provenance.result }}" = success
 
       - name: Require immutable tag event
