@@ -97,7 +97,7 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           git fetch --force --tags origin
           TAG_TARGET="$(git rev-parse "refs/tags/${TAG}^{commit}")"
-            test "$TAG_TARGET" = "${GITHUB_SHA}"
+          test "$TAG_TARGET" = "${GITHUB_SHA}"
 
       - name: Build immutable source subject
         shell: bash
