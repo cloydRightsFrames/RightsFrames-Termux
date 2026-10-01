@@ -377,6 +377,12 @@ jobs:
           name: rightsframes-slsa3-${{ github.sha }}
           path: dist
 
+      - name: Download independent reproducibility artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rightsframes-canonical-${{ github.sha }}
+          path: reproducibility
+
       - name: Download release evidence
         uses: actions/download-artifact@v4
         with:
@@ -413,7 +419,21 @@ jobs:
           assert manifest["sha256"] == actual
           assert manifest["reproducible"] is True
           assert manifest["independentBuilds"] == 2
+          assert manifest["slsaBuildLevel"] == 3
+          assert manifest["signerWorkflow"] == f"{manifest["repository"]}/.github/workflows/slsa-build-l3.yml"
           PY
+
+
+      - name: Bind L3 artifact to independent reproducibility result
+        shell: bash
+        run: |
+          set -euo pipefail
+          L3="dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          REPRO="reproducibility/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          test -s "$L3"
+          test -s "$REPRO"
+          test "$(sha256sum "$L3" | awk '{print $1}')" = "$(sha256sum "$REPRO" | awk '{print $1}')"
+          echo 'L3_ARTIFACT=REPRODUCIBILITY_BOUND'
 
       - name: Verify SLSA Build L3 attestation before publication
         env:
