@@ -277,19 +277,35 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  slsa3-build:
+    name: SLSA Build L3 trusted builder
+    needs:
+      - source-integrity
+      - test
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/slsa-build-l3.yml
+    with:
+      artifact_name: RightsFrames-Termux-${{ github.ref_name }}.tar.gz
+      bundle_name: rightsframes-slsa3-${{ github.sha }}
+
   provenance:
     name: External SLSA provenance
     needs:
       - source-integrity
       - test
       - reproducibility
+      - slsa3-build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - name: Download canonical artifact
         uses: actions/download-artifact@v4
         with:
-          name: rightsframes-canonical-${{ github.sha }}
+          name: rightsframes-slsa3-${{ github.sha }}
           path: dist
 
       - name: Verify canonical artifact before attestation
@@ -330,6 +346,8 @@ jobs:
               "artifact": "${ART}",
               "sha256": "${DIGEST}",
               "predicateType": "https://slsa.dev/provenance/v1",
+              "slsaBuildLevel": 3,
+              "signerWorkflow": "${GITHUB_REPOSITORY}/.github/workflows/slsa-build-l3.yml",
               "workflow": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
               "workflowRef": "${GITHUB_WORKFLOW_REF}",
               "runId": "${GITHUB_RUN_ID}",
@@ -360,6 +378,7 @@ jobs:
     needs:
       - provenance
       - reproducibility
+      - slsa3-build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -370,8 +389,14 @@ jobs:
       - name: Download canonical artifact
         uses: actions/download-artifact@v4
         with:
-          name: rightsframes-canonical-${{ github.sha }}
+          name: rightsframes-slsa3-${{ github.sha }}
           path: dist
+
+      - name: Download independent reproducibility artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rightsframes-canonical-${{ github.sha }}
+          path: reproducibility
 
       - name: Download release evidence
         uses: actions/download-artifact@v4
@@ -409,7 +434,37 @@ jobs:
           assert manifest["sha256"] == actual
           assert manifest["reproducible"] is True
           assert manifest["independentBuilds"] == 2
+          assert manifest["slsaBuildLevel"] == 3
+          assert manifest["signerWorkflow"] == f'{manifest["repository"]}/.github/workflows/slsa-build-l3.yml'
           PY
+
+
+      - name: Bind L3 artifact to independent reproducibility result
+        shell: bash
+        run: |
+          set -euo pipefail
+          L3="dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          REPRO="reproducibility/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          test -s "$L3"
+          test -s "$REPRO"
+          test "$(sha256sum "$L3" | awk '{print $1}')" = "$(sha256sum "$REPRO" | awk '{print $1}')"
+          echo 'L3_ARTIFACT=REPRODUCIBILITY_BOUND'
+
+      - name: Verify SLSA Build L3 attestation before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ART="dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          gh attestation verify \
+            "$ART" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --predicate-type 'https://slsa.dev/provenance/v1' \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/slsa-build-l3.yml" \
+            --source-ref "refs/tags/${GITHUB_REF_NAME}" \
+            --deny-self-hosted-runners
+          echo 'SLSA_BUILD_LEVEL=3_VERIFIED'
 
       - name: Publish release
         env:
@@ -452,6 +507,7 @@ jobs:
       - build-a
       - build-b
       - reproducibility
+      - slsa3-build
       - provenance
       - release
     if: startsWith(github.ref, 'refs/tags/v')
@@ -466,6 +522,7 @@ jobs:
           test "${{ needs.build-a.result }}" = success
           test "${{ needs.build-b.result }}" = success
           test "${{ needs.reproducibility.result }}" = success
+          test "${{ needs.slsa3-build.result }}" = success
           test "${{ needs.provenance.result }}" = success
           test "${{ needs.release.result }}" = success
           test "${GITHUB_REF_TYPE}" = tag
