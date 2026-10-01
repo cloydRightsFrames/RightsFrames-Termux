@@ -1,0 +1,189 @@
+name: RightsFrames Enterprise Provenance Gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: rightsframes-provenance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-integrity:
+    name: Source integrity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify repository identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git remote get-url origin)" = "https://github.com/cloydRightsFrames/RightsFrames-Termux"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Parse Python without modifying checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          for path in sorted(Path('core').glob('*.py')):
+              ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+          PY
+
+      - name: Required source files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f core/rf_core.py
+          test -f core/app.py
+
+      - name: Clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain=v1)"
+
+      - name: Record source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "${GITHUB_SHA}" > source.sha256
+          git rev-parse HEAD^{tree} > source.tree
+          git show -s --format='%H%n%T%n%P%n%ct%n%s' HEAD > source.commit
+          test -z "$(git status --porcelain=v1)"
+
+  provenance:
+    name: External provenance
+    needs: source-integrity
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout immutable tag target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag resolves to checked revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          git fetch --force --tags origin
+          test "$(git rev-list -n1 "refs/tags/${TAG}")" = "${GITHUB_SHA}"
+
+      - name: Build immutable source subject
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git archive \
+            --format=tar \
+            --prefix="RightsFrames-Termux-${GITHUB_REF_NAME}/" \
+            "${GITHUB_SHA}" \
+            > "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar"
+
+          gzip -n \
+            "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar"
+
+          mv \
+            "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz" \
+            "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+
+          sha256sum \
+            "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz" \
+            > dist/SHA256SUMS
+
+          sha256sum \
+            "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz" \
+            | awk '{print $1}' \
+            > dist/SUBJECT_SHA256
+
+      - name: Generate SLSA provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/RightsFrames-Termux-${{ github.ref_name }}.tar.gz
+          show-summary: true
+
+      - name: Preserve machine-verifiable manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARTIFACT="RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          DIGEST="$(sha256sum "dist/${ARTIFACT}" | awk '{print $1}')"
+
+          python3 - <<PY
+          import json
+
+          manifest = {
+              "schema": "https://rightsframes.online/provenance/release-manifest/v1",
+              "repository": "cloydRightsFrames/RightsFrames-Termux",
+              "ref": "${GITHUB_REF}",
+              "tag": "${GITHUB_REF_NAME}",
+              "commit": "${GITHUB_SHA}",
+              "artifact": "${ARTIFACT}",
+              "sha256": "${DIGEST}",
+              "predicateType": "https://slsa.dev/provenance/v1",
+              "workflow": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
+              "workflowRef": "${GITHUB_WORKFLOW_REF}",
+              "runner": "GitHub-hosted",
+              "repositoryVisibility": "public"
+          }
+
+          with open("dist/release-manifest.json", "w", encoding="utf-8") as f:
+              json.dump(manifest, f, indent=2, sort_keys=True)
+              f.write("\n")
+          PY
+
+      - name: Verify final workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s dist/SHA256SUMS
+          test -s dist/SUBJECT_SHA256
+          test -s dist/release-manifest.json
+          python3 -m json.tool dist/release-manifest.json >/dev/null
+
+  release-policy:
+    name: Release policy gate
+    needs:
+      - source-integrity
+      - provenance
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require provenance completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ needs.source-integrity.result }}" = success
+          test "${{ needs.provenance.result }}" = success
+
+      - name: Require immutable tag event
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_TYPE}" = tag
+          case "${GITHUB_REF_NAME}" in
+            v*) ;;
+            *) exit 1 ;;
+          esac
