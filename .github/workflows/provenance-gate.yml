@@ -420,7 +420,7 @@ jobs:
           assert manifest["reproducible"] is True
           assert manifest["independentBuilds"] == 2
           assert manifest["slsaBuildLevel"] == 3
-          assert manifest["signerWorkflow"] == f"{manifest["repository"]}/.github/workflows/slsa-build-l3.yml"
+          assert manifest["signerWorkflow"] == f'{manifest["repository"]}/.github/workflows/slsa-build-l3.yml'
           PY
 
 
