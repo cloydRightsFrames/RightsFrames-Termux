@@ -7,8 +7,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - 'v*'
 
 permissions:
   contents: read
@@ -47,11 +45,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="$(gh release view --repo "${GITHUB_REPOSITORY}" --json tagName --jq '.tagName')"
-          case "$TAG" in
-            v*) ;;
-            *) echo 'no versioned release found'; exit 1 ;;
-          esac
+          TAG="$(git tag --list 'v*' --sort=-version:refname | head -n1)"
+          test -n "$TAG"
           printf '%s\n' "$TAG" > "${RUNNER_TEMP}/rightsframes-release-tag"
 
       - name: Verify release, tag, assets, manifest, and attestation
