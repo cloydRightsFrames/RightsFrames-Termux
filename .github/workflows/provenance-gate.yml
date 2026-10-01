@@ -418,9 +418,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          gh release view "${GITHUB_REF_NAME}" \
-            --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 &&
-            exit 1 || true
+          RELEASE_HTTP="$(gh api \
+            --include \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${GITHUB_REF_NAME}" \
+            2>&1 || true)"
+
+          if printf '%s\n' "$RELEASE_HTTP" | grep -q '^HTTP/[0-9.]* 200 '; then
+            echo 'release already exists'
+            exit 1
+          fi
+
+          if printf '%s\n' "$RELEASE_HTTP" | grep -q '^HTTP/[0-9.]* 404 '; then
+            :
+          else
+            echo 'release lookup failed closed'
+            printf '%s\n' "$RELEASE_HTTP"
+            exit 1
+          fi
 
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
