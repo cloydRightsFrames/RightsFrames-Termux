@@ -58,9 +58,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          git archive             --format=tar             --prefix="RightsFrames-Termux-${GITHUB_REF_NAME}/"             "${GITHUB_SHA}"             > "dist/${{ inputs.artifact_name%.gz }}"
-          gzip -n "dist/${{ inputs.artifact_name%.gz }}"
-          sha256sum "dist/${{ inputs.artifact_name }}" > dist/SHA256SUMS
+          ART="${{ inputs.artifact_name }}"
+          TAR="${ART%.gz}"
+          git archive \
+            --format=tar \
+            --prefix="RightsFrames-Termux-${GITHUB_REF_NAME}/" \
+            "${GITHUB_SHA}" \
+            > "dist/$TAR"
+          gzip -n "dist/$TAR"
+          sha256sum "dist/$ART" > dist/SHA256SUMS
           git rev-parse HEAD > dist/SOURCE_COMMIT
           git rev-parse HEAD^{tree} > dist/SOURCE_TREE
 
