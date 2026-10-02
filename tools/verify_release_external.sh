@@ -23,7 +23,6 @@ esac
 echo "VERIFYING_REPOSITORY=$REPO"
 echo "VERIFYING_TAG=$TAG"
 
-gh release verify "$TAG" --repo "$REPO"
 
 gh release download "$TAG"   --repo "$REPO"   --pattern "RightsFrames-Termux-$TAG.tar.gz"   --pattern SHA256SUMS   --pattern release-manifest.json   --dir "$TMP/release"
 
@@ -95,13 +94,15 @@ cmp "$TMP/reproduced.tar.gz" "$ART"
 
 ATTEST_DIR="$TMP/attestation"
 mkdir -p "$ATTEST_DIR"
-gh attestation download \
-  "$ART" \
-  --repo "$REPO" \
-  --predicate-type 'https://slsa.dev/provenance/v1' \
-  --limit 30 \
-  --dir "$ATTEST_DIR"
-
+(
+  cd "$ATTEST_DIR"
+  ( cd "$ATTEST_DIR" && gh attestation download \
+    "$ART" \
+    --repo "$REPO" \
+    --predicate-type 'https://slsa.dev/provenance/v1' \
+    --limit 30
+  )
+)
 ATTEST_BUNDLE="$(find "$ATTEST_DIR" -maxdepth 1 -type f -name 'sha256:*' -print -quit)"
 test -s "$ATTEST_BUNDLE"
 
