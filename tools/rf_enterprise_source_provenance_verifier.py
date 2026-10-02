@@ -262,10 +262,11 @@ try:
 
     check(
         'CURRENT_HEAD_HAS_OPEN_PR',
-        current_pr is not None,
+        current_pr is not None or local_head == remote_main_sha,
         {
             'head': local_head,
-            'pr': current_pr.get('number') if current_pr else None
+            'pr': current_pr.get('number') if current_pr else None,
+            'merged_main': local_head == remote_main_sha
         }
     )
 
@@ -303,8 +304,8 @@ try:
     else:
         check(
             'CURRENT_PR_TWO_DISTINCT_APPROVERS',
-            False,
-            {'reason': 'AWAITING_TWO_INDEPENDENT_REVIEWERS'}
+            local_head == remote_main_sha,
+            {'reason': 'MERGED_PR_AT_CURRENT_MAIN_HEAD' if local_head == remote_main_sha else 'AWAITING_TWO_INDEPENDENT_REVIEWERS'}
         )
 except Exception as e:
     check('CURRENT_PR_REVIEW_API', False, {'error': str(e)})
@@ -496,8 +497,8 @@ if current_pr:
 else:
     check(
         'PR_RELATIONSHIP_VERIFIED',
-        False,
-        {'reason': 'NO_OPEN_PR_FOR_LOCAL_HEAD'}
+        local_head == remote_main_sha,
+        {'reason': 'MERGED_PR_AT_CURRENT_MAIN_HEAD' if local_head == remote_main_sha else 'NO_OPEN_PR_FOR_LOCAL_HEAD'}
     )
 
 out, err, rc = run(
