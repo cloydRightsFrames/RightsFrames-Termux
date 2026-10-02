@@ -1,0 +1,153 @@
+{
+  "commit": "aa277fbb8c18dad6314a6ce108007883b80f1ae3",
+  "files": {
+    ".github/workflows/continuous-release-integrity.yml": {
+      "bytes": 5856,
+      "mode": "0o600",
+      "sha256": "ae95a85f822abc91413194218e83b2f0373fd366f016929949bc402316226762"
+    },
+    ".github/workflows/provenance-gate.yml": {
+      "bytes": 19016,
+      "mode": "0o600",
+      "sha256": "061ac5f09add329842837da923ed8d1776b0c0da06cb4db3bd5a39d7c7be6cd8"
+    },
+    ".github/workflows/slsa-build-l3.yml": {
+      "bytes": 3113,
+      "mode": "0o600",
+      "sha256": "5fcb3cb554379fa94fac1e80922b3ec838aa30796cc6965583e09481120afbae"
+    },
+    ".github/workflows/verify.yml": {
+      "bytes": 1327,
+      "mode": "0o600",
+      "sha256": "8958a96991349028fd0e6ed00033af266ff47823461fc1f3bef244266750872e"
+    },
+    ".gitignore": {
+      "bytes": 108,
+      "mode": "0o600",
+      "sha256": "bb11f2684335ad64c6493aef0e24bbe5be5963f061a42de550c1cae26d9dcaf9"
+    },
+    "CONTRIBUTING.md": {
+      "bytes": 152,
+      "mode": "0o600",
+      "sha256": "89c6ba0332bc47ebc5613b44f50d9864f43766d29760fa31789ca4c682f00597"
+    },
+    "LICENSE": {
+      "bytes": 744,
+      "mode": "0o600",
+      "sha256": "deef0d1a293af7c6a55d0e051bb05ce41703693305a5eedbdbbff42f334676ab"
+    },
+    "README.md": {
+      "bytes": 1393,
+      "mode": "0o600",
+      "sha256": "693fb5450bab397e9e834fbaf2f2fb07a2b2c08fecf5730f5903d1d9668bc224"
+    },
+    "SECURITY.md": {
+      "bytes": 822,
+      "mode": "0o600",
+      "sha256": "2a7827557e74350d9817a5438fe99fcf0483af337fcc9a378de1afcadc2d3638"
+    },
+    "core/Dockerfile": {
+      "bytes": 248,
+      "mode": "0o600",
+      "sha256": "f253b13af8be5adddca0fa32450dbd769747225659f4431e48a119db3dcfab99"
+    },
+    "core/LICENSE": {
+      "bytes": 1065,
+      "mode": "0o600",
+      "sha256": "85e987d43004726e104c3197d9ec4e71a4f4b343c93a5b8d7dc61e8f7baf2c76"
+    },
+    "core/app.py": {
+      "bytes": 791,
+      "mode": "0o600",
+      "sha256": "17f51fb371e654e6be47b5f1a1e090d8cd6ddf9e00f6a69841db70e8d70082a0"
+    },
+    "core/docker-compose.yml": {
+      "bytes": 130,
+      "mode": "0o600",
+      "sha256": "695299e6d33d14a7c38d096c201bc42a8f75c3df4036555bb0fe1c2a9ddc9db5"
+    },
+    "core/requirements.txt": {
+      "bytes": 54,
+      "mode": "0o600",
+      "sha256": "1d685411c3c43ebfbdfbe07e2806de07aee7e4a7d7ea40ed9febb12fc57a94f4"
+    },
+    "core/rf_core.py": {
+      "bytes": 5626,
+      "mode": "0o600",
+      "sha256": "ff6ec9fb09d20d2224e6195a439cbc1702d41d5e04cf683408654aa64f813614"
+    },
+    "docs/EXTERNAL-VERIFICATION.md": {
+      "bytes": 3311,
+      "mode": "0o600",
+      "sha256": "89d0ab035537a17d5be92d45a4e736dc67ab5d2f43a1721db83f1af807433daa"
+    },
+    "provenance/adversarial_verify.sh": {
+      "bytes": 1045,
+      "mode": "0o700",
+      "sha256": "2fc21c703b09eb1c693c53499b9939fe00ba4bb588624410a8accfac9a111fde"
+    },
+    "provenance/reproducibility_verify.sh": {
+      "bytes": 337,
+      "mode": "0o700",
+      "sha256": "1f995e1d32e4640e8ff4ec667489f6115233c0be90c1406df979113867fa8170"
+    },
+    "provenance/rf_automation.sh": {
+      "bytes": 9319,
+      "mode": "0o700",
+      "sha256": "34f4d616c64133381852188a949e8e7b12b24d6b4c7116d056141112a9770bb3"
+    },
+    "provenance/rf_repair.py": {
+      "bytes": 785,
+      "mode": "0o600",
+      "sha256": "3dc4911fe8fedd90058beca655db2f960cb8721089cb3daec15fdf53a7bd67da"
+    },
+    "provenance/verify_release.sh": {
+      "bytes": 3775,
+      "mode": "0o700",
+      "sha256": "37f58230125653e6efa1f57fa845f2a15c9c35f396d60cf22a50ea125f67f946"
+    },
+    "tests/test_rightsframes_baseline.py": {
+      "bytes": 5577,
+      "mode": "0o600",
+      "sha256": "695f23d0291f6fad50b07ed2042503c4867931ef3a216071aad32871e8774c0c"
+    },
+    "tools/rf_apex_gate.py": {
+      "bytes": 5059,
+      "mode": "0o755",
+      "sha256": "d8c118447feefb8394a8d70f871ed492ad61d51bc5649dc2cd09df8f20d21236"
+    },
+    "tools/rf_enterprise_source_provenance_verifier.py": {
+      "bytes": 14826,
+      "mode": "0o700",
+      "sha256": "a0b4e286e18910803c3e8244e245b10e3efbd8469c67eb92baa5d93f80220dee"
+    },
+    "tools/rf_provenance_hardening_engine.py": {
+      "bytes": 8059,
+      "mode": "0o700",
+      "sha256": "9425d2cd9d63b8afb0ab87345ef2d66921bb04a179a367901288eab354463cf6"
+    },
+    "tools/rf_source_l4_external_verifier.py": {
+      "bytes": 13158,
+      "mode": "0o700",
+      "sha256": "2e1140c037f7b8c561c4ae0e8339d57f6d76548f9d3132eb4e0860e7bee0c052"
+    },
+    "tools/verify_release_external.sh": {
+      "bytes": 4005,
+      "mode": "0o700",
+      "sha256": "64f845acbbc091c0af921c1374cd9d0834a6ada252430df15003b477d0b5efb0"
+    },
+    "tools/verify_source_l4_policy.py": {
+      "bytes": 2744,
+      "mode": "0o700",
+      "sha256": "58e4fb308e83665c08f964d396b0f1ff63ee99817ff79a7f9ca56a2e877e6232"
+    },
+    "tools/verify_supply_chain_policy.py": {
+      "bytes": 2175,
+      "mode": "0o600",
+      "sha256": "2d94118ba056111d80288f1c93ca1197cf7f54c83b54295062a1f292d4bf1c02"
+    }
+  },
+  "generated_utc": "20261002T181911Z",
+  "schema": "rightsframes.apex.manifest.v1",
+  "tree": "146f4dd9906dc6d4b2c4b6e153358781eeababc8"
+}

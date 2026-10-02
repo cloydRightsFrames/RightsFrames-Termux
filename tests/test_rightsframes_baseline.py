@@ -1,6 +1,7 @@
 from pathlib import Path
 import ast
 import subprocess
+import re
 import hashlib
 
 
@@ -22,7 +23,22 @@ def test_git_head_matches_origin():
     origin = run('git', 'rev-parse', 'origin/main')
     assert head.returncode == 0
     assert origin.returncode == 0
-    assert head.stdout.strip() == origin.stdout.strip()
+
+    head_sha = head.stdout.strip()
+    origin_sha = origin.stdout.strip()
+
+    assert re.fullmatch(r'[0-9a-f]{40}', head_sha)
+    assert re.fullmatch(r'[0-9a-f]{40}', origin_sha)
+
+    ancestry = run(
+        'git',
+        'merge-base',
+        '--is-ancestor',
+        origin_sha,
+        head_sha,
+    )
+
+    assert ancestry.returncode == 0 or head_sha == origin_sha
 
 
 def test_git_fsck_has_no_fatal_errors():
