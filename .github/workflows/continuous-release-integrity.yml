@@ -153,11 +153,13 @@ jobs:
           PY
 
           ATTEST_DIR="$(mktemp -d)"
-          gh attestation download "$ART" \
-            --repo "$REPO" \
-            --predicate-type 'https://slsa.dev/provenance/v1' \
-            --limit 30 \
-            --dir "$ATTEST_DIR"
+          (
+            cd "$ATTEST_DIR"
+            gh attestation download "$ART" \
+              --repo "$REPO" \
+              --predicate-type 'https://slsa.dev/provenance/v1' \
+              --limit 30
+          )
           ATTEST_BUNDLE="$(find "$ATTEST_DIR" -maxdepth 1 -type f -name 'sha256:*' -print -quit)"
           test -s "$ATTEST_BUNDLE"
           TRUSTED_ROOT="$ATTEST_DIR/trusted_root.jsonl"
