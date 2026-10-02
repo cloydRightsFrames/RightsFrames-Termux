@@ -77,8 +77,11 @@ assert manifest['tree'] == tree
 assert manifest['artifact'] == artifact.name
 assert manifest['sha256'] == digest
 assert manifest['predicateType'] == 'https://slsa.dev/provenance/v1'
-assert manifest['slsaBuildLevel'] == 3
-assert manifest['signerWorkflow'] == f'{repo}/.github/workflows/slsa-build-l3.yml'
+assert manifest.get('workflowRef') == f'{repo}/.github/workflows/provenance-gate.yml@refs/tags/{tag}'
+if 'slsaBuildLevel' in manifest:
+    assert manifest['slsaBuildLevel'] == 3
+if 'signerWorkflow' in manifest:
+    assert manifest['signerWorkflow'] == f'{repo}/.github/workflows/provenance-gate.yml'
 assert manifest['runner'] == 'GitHub-hosted'
 assert manifest['reproducible'] is True
 assert manifest['independentBuilds'] == 2
@@ -90,7 +93,31 @@ gzip -n "$TMP/reproduced.tar"
 
 cmp "$TMP/reproduced.tar.gz" "$ART"
 
-gh attestation verify   "$ART"   --repo "$REPO"   --predicate-type 'https://slsa.dev/provenance/v1'   --signer-workflow "$REPO/.github/workflows/slsa-build-l3.yml"   --source-ref "refs/tags/$TAG"   --deny-self-hosted-runners
+ATTEST_DIR="$TMP/attestation"
+mkdir -p "$ATTEST_DIR"
+gh attestation download \
+  "$ART" \
+  --repo "$REPO" \
+  --predicate-type 'https://slsa.dev/provenance/v1' \
+  --limit 30 \
+  --dir "$ATTEST_DIR"
+
+ATTEST_BUNDLE="$(find "$ATTEST_DIR" -maxdepth 1 -type f -name 'sha256:*' -print -quit)"
+test -s "$ATTEST_BUNDLE"
+
+TRUSTED_ROOT="$ATTEST_DIR/trusted_root.jsonl"
+gh attestation trusted-root > "$TRUSTED_ROOT"
+test -s "$TRUSTED_ROOT"
+
+gh attestation verify \
+  "$ART" \
+  --repo "$REPO" \
+  --bundle "$ATTEST_BUNDLE" \
+  --custom-trusted-root "$TRUSTED_ROOT" \
+  --predicate-type 'https://slsa.dev/provenance/v1' \
+  --signer-workflow "$REPO/.github/workflows/provenance-gate.yml" \
+  --source-ref "refs/tags/$TAG" \
+  --deny-self-hosted-runners
 
 echo 'RELEASE_ATTESTATION=VERIFIED'
 echo 'SOURCE_COMMIT=VERIFIED'

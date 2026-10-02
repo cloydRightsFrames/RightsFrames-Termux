@@ -24,9 +24,12 @@ required = {
         'gzip -n',
     ],
     'continuous-release-integrity.yml': [
+        'gh attestation download',
         'gh attestation verify',
+        '--bundle',
+        '--custom-trusted-root',
+        '--signer-workflow "${REPO}/.github/workflows/provenance-gate.yml"',
         '--deny-self-hosted-runners',
-        'slsa-build-l3.yml',
     ],
 }
 
