@@ -351,14 +351,16 @@ required = {
         'id-token: write',
         'attestations: write',
         'artifact-metadata: write',
-        'actions/attest@v4',
         'git archive',
         'gzip -n'
     ),
     'continuous-release-integrity.yml': (
+        'gh attestation download',
         'gh attestation verify',
+        '--bundle',
+        '--custom-trusted-root',
         '--deny-self-hosted-runners',
-        'slsa-build-l3.yml'
+        'provenance-gate.yml'
     )
 }
 

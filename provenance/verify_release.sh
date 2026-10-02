@@ -107,9 +107,26 @@ print("REPRODUCIBILITY=VERIFIED")
 print("TAG_TO_MANIFEST=VERIFIED")
 PY
 
+ATTEST_DIR="$TMP/attestation"
+mkdir -p "$ATTEST_DIR"
+gh attestation download "$ART" \
+    --repo "$REPO" \
+    --predicate-type 'https://slsa.dev/provenance/v1' \
+    --limit 30 \
+    --dir "$ATTEST_DIR"
+
+ATTEST_BUNDLE="$(find "$ATTEST_DIR" -maxdepth 1 -type f -name 'sha256:*' -print -quit)"
+test -s "$ATTEST_BUNDLE"
+
+TRUSTED_ROOT="$ATTEST_DIR/trusted_root.jsonl"
+gh attestation trusted-root > "$TRUSTED_ROOT"
+test -s "$TRUSTED_ROOT"
+
 GH_PAGER=cat gh attestation verify \
     "$ART" \
     --repo "$REPO" \
+    --bundle "$ATTEST_BUNDLE" \
+    --custom-trusted-root "$TRUSTED_ROOT" \
     --predicate-type 'https://slsa.dev/provenance/v1' \
     --signer-workflow "${REPO}/.github/workflows/provenance-gate.yml" \
     --source-ref "refs/tags/${TAG}" \

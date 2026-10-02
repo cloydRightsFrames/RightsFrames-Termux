@@ -368,7 +368,7 @@ jobs:
               "sha256": "${DIGEST}",
               "predicateType": "https://slsa.dev/provenance/v1",
               "slsaBuildLevel": 3,
-              "signerWorkflow": "${GITHUB_REPOSITORY}/.github/workflows/slsa-build-l3.yml",
+              "signerWorkflow": "${GITHUB_REPOSITORY}/.github/workflows/provenance-gate.yml",
               "workflow": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
               "workflowRef": "${GITHUB_WORKFLOW_REF}",
               "runId": "${GITHUB_RUN_ID}",
@@ -456,7 +456,7 @@ jobs:
           assert manifest["reproducible"] is True
           assert manifest["independentBuilds"] == 2
           assert manifest["slsaBuildLevel"] == 3
-          assert manifest["signerWorkflow"] == f'{manifest["repository"]}/.github/workflows/slsa-build-l3.yml'
+          assert manifest["signerWorkflow"] == f'{manifest["repository"]}/.github/workflows/provenance-gate.yml'
           PY
 
 
@@ -478,11 +478,25 @@ jobs:
         run: |
           set -euo pipefail
           ART="dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          ATTEST_DIR="$(mktemp -d)"
+          gh attestation download "$ART" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --predicate-type 'https://slsa.dev/provenance/v1' \
+            --limit 30 \
+            --dir "$ATTEST_DIR"
+          ATTEST_BUNDLE="$(find "$ATTEST_DIR" -maxdepth 1 -type f -name 'sha256:*' -print -quit)"
+          test -s "$ATTEST_BUNDLE"
+          TRUSTED_ROOT="$ATTEST_DIR/trusted_root.jsonl"
+          gh attestation trusted-root > "$TRUSTED_ROOT"
+          test -s "$TRUSTED_ROOT"
+
           gh attestation verify \
             "$ART" \
             --repo "${GITHUB_REPOSITORY}" \
+            --bundle "$ATTEST_BUNDLE" \
+            --custom-trusted-root "$TRUSTED_ROOT" \
             --predicate-type 'https://slsa.dev/provenance/v1' \
-            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/slsa-build-l3.yml" \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/provenance-gate.yml" \
             --source-ref "refs/tags/${GITHUB_REF_NAME}" \
             --deny-self-hosted-runners
           echo 'SLSA_BUILD_LEVEL=3_VERIFIED'
