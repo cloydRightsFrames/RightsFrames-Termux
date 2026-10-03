@@ -1,0 +1,23 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+ROOT="${HOME}/RightsFrames-Termux"
+cd "$ROOT"
+
+PYTHON_BIN="${PYTHON_BIN:-python}"
+
+"$PYTHON_BIN" -m py_compile \
+  enterprise/control_plane/audit.py \
+  enterprise/control_plane/policy.py \
+  enterprise/control_plane/health.py \
+  enterprise/control_plane/provenance.py \
+  enterprise/control_plane/cli.py
+
+"$PYTHON_BIN" -m unittest discover \
+  -s tests \
+  -p 'test_enterprise_control_plane.py' \
+  -v
+
+"$PYTHON_BIN" -m enterprise.control_plane.cli readiness
+
+printf '%s\n' 'RIGHTSFRAMES_ENTERPRISE_GATE=PASS'

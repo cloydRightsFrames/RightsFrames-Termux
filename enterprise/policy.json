@@ -1,0 +1,11 @@
+{
+  "schema": "rf.policy.v1",
+  "mode": "fail-closed",
+  "required": {
+    "clean_worktree": true,
+    "immutable_actions": true,
+    "pinned_dependencies": true,
+    "tests_pass": true,
+    "provenance_record": true
+  }
+}
