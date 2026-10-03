@@ -1,0 +1,314 @@
+{
+  "commit": "aa277fbb8c18dad6314a6ce108007883b80f1ae3",
+  "fail": 0,
+  "generated_utc": "20261002T182141Z",
+  "manifest": "/data/data/com.termux/files/home/RightsFrames-Termux/artifacts/apex/apex_manifest_20261002T182141Z.json",
+  "pass": 56,
+  "repository": "/data/data/com.termux/files/home/RightsFrames-Termux",
+  "results": [
+    {
+      "control": "REQUIRED::.git",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::.github/workflows/verify.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::.github/workflows/provenance-gate.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::.github/workflows/continuous-release-integrity.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::.github/workflows/slsa-build-l3.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::core/requirements.txt",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::core/Dockerfile",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::core/app.py",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::core/rf_core.py",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::tools/verify_supply_chain_policy.py",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::tools/rf_source_l4_external_verifier.py",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::provenance/verify_release.sh",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::provenance/reproducibility_verify.sh",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "REQUIRED::provenance/adversarial_verify.sh",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "GIT::FULL_FSCK",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "GIT::HEAD_TREE_RESOLUTION",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "GIT::WORKTREE_STATE",
+      "detail": "changes-present",
+      "level": "PASS"
+    },
+    {
+      "control": "GIT::PRIMARY_BRANCH",
+      "detail": "main",
+      "level": "PASS"
+    },
+    {
+      "control": "GIT::REMOTE_ALIGNMENT",
+      "detail": "HEAD differs from origin/main",
+      "level": "WARN"
+    },
+    {
+      "control": "GIT::REF_DATABASE",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::PERMISSIONS::continuous-release-integrity.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::ACTION_PINNING::continuous-release-integrity.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::PR_TRUST_BOUNDARY::continuous-release-integrity.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::WRITE_SCOPE::continuous-release-integrity.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::SECRET_USAGE::continuous-release-integrity.yml",
+      "detail": "none detected",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::PERMISSIONS::provenance-gate.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::ACTION_PINNING::provenance-gate.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::PR_TRUST_BOUNDARY::provenance-gate.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::WRITE_SCOPE::provenance-gate.yml",
+      "detail": "contents write permission present",
+      "level": "WARN"
+    },
+    {
+      "control": "CI::SECRET_USAGE::provenance-gate.yml",
+      "detail": "none detected",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::PERMISSIONS::slsa-build-l3.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::ACTION_PINNING::slsa-build-l3.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::PR_TRUST_BOUNDARY::slsa-build-l3.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::WRITE_SCOPE::slsa-build-l3.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::SECRET_USAGE::slsa-build-l3.yml",
+      "detail": "none detected",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::PERMISSIONS::verify.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::ACTION_PINNING::verify.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::PR_TRUST_BOUNDARY::verify.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::WRITE_SCOPE::verify.yml",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CI::SECRET_USAGE::verify.yml",
+      "detail": "none detected",
+      "level": "PASS"
+    },
+    {
+      "control": "SUPPLY_CHAIN::PYTHON_PINNING",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "SUPPLY_CHAIN::CORE_RUNTIME_DECLARATIONS",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CONTAINER::BASE_DIGEST",
+      "detail": "python:3.12-slim",
+      "level": "WARN"
+    },
+    {
+      "control": "CONTAINER::NONROOT_USER",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CONTAINER::HEALTHCHECK",
+      "detail": "",
+      "level": "WARN"
+    },
+    {
+      "control": "SECRETS::TRACKED_SOURCE_SCAN",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CODE::PYTHON_AST",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "CODE::PYTHON_COMPILE",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "TEST::PYTEST",
+      "detail": "................                                                         [100%]\n16 passed in 0.46s\n",
+      "level": "PASS"
+    },
+    {
+      "control": "INTEGRITY::SOURCE_MANIFEST",
+      "detail": "/data/data/com.termux/files/home/RightsFrames-Termux/artifacts/apex/apex_manifest_20261002T182141Z.json",
+      "level": "PASS"
+    },
+    {
+      "control": "FILEMODE::tools/verify_supply_chain_policy.py",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "FILEMODE::tools/rf_source_l4_external_verifier.py",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "FILEMODE::provenance/verify_release.sh",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "FILEMODE::provenance/reproducibility_verify.sh",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "FILEMODE::provenance/adversarial_verify.sh",
+      "detail": "",
+      "level": "PASS"
+    },
+    {
+      "control": "TOOLING::git",
+      "detail": "/data/data/com.termux/files/usr/bin/git",
+      "level": "PASS"
+    },
+    {
+      "control": "TOOLING::python3",
+      "detail": "/data/data/com.termux/files/usr/bin/python3",
+      "level": "PASS"
+    },
+    {
+      "control": "TOOLING::pytest",
+      "detail": "/data/data/com.termux/files/usr/bin/pytest",
+      "level": "PASS"
+    },
+    {
+      "control": "TOOLING::openssl",
+      "detail": "/data/data/com.termux/files/usr/bin/openssl",
+      "level": "PASS"
+    },
+    {
+      "control": "TOOLING::curl",
+      "detail": "/data/data/com.termux/files/usr/bin/curl",
+      "level": "PASS"
+    }
+  ],
+  "schema": "rightsframes.apex.enterprise.v1",
+  "total": 60,
+  "tree": "146f4dd9906dc6d4b2c4b6e153358781eeababc8",
+  "warn": 4
+}
