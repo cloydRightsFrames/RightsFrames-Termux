@@ -85,8 +85,8 @@ jobs:
           test "$(jq -r '.commit' linux/linux-manifest.json)" = "${GITHUB_SHA}"
           test "$(jq -r '.commit' windows/windows-manifest.json)" = "${GITHUB_SHA}"
           test "$(jq -r '.tracked_files | length' linux/linux-manifest.json)" = "$(jq -r '.tracked_files | length' windows/windows-manifest.json)"
-          jq -S -c . linux/linux-manifest.json > linux/canonical.json
-          jq -S -c . windows/windows-manifest.json > windows/canonical.json
+          jq -S -c '.tracked_files |= sort_by(.path)' linux/linux-manifest.json > linux/canonical.json
+          jq -S -c '.tracked_files |= sort_by(.path)' windows/windows-manifest.json > windows/canonical.json
           L="$(sha256sum linux/canonical.json | awk '{print $1}')"
           W="$(sha256sum windows/canonical.json | awk '{print $1}')"
           printf '%s\n' "LINUX_CANONICAL_SHA256=$L"
