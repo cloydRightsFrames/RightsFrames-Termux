@@ -51,7 +51,7 @@ jobs:
           $ErrorActionPreference = "Stop"
           if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw "COMMIT_MISMATCH" }
           $status = git status --short --untracked-files=no
-if ($null -ne $status -and $status.ToString().Trim().Length -gt 0) { throw "WORKTREE_NOT_CLEAN" }
+          if ($null -ne $status -and $status.ToString().Trim().Length -gt 0) { throw "WORKTREE_NOT_CLEAN" }
           powershell -NoProfile -ExecutionPolicy Bypass -File tools/provenance/cross_env_verify.ps1 . windows-manifest.json
           if ((Get-Content windows-manifest.json.sha256).Trim() -notmatch '^[0-9a-f]{64}\s+') { throw "BAD_MANIFEST_HASH" }
 
