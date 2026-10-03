@@ -1,0 +1,120 @@
+name: RightsFrames Cross-Environment Provenance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-independent:
+    name: Independent Linux Manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify repository state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test -z "$(git status --short --untracked-files=no)"
+          python3 tools/provenance/cross_env_verify.py . linux-manifest.json
+          sha256sum linux-manifest.json
+          test "$(jq -r '.commit' linux-manifest.json)" = "${GITHUB_SHA}"
+          test "$(jq -r '.tracked_file_count' linux-manifest.json)" -gt 0
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: linux-cross-environment-manifest
+          path: |
+            linux-manifest.json
+            linux-manifest.json.sha256
+
+  windows-independent:
+    name: Independent Windows Manifest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Verify repository state
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ((git rev-parse HEAD).Trim() -ne $env:GITHUB_SHA) { throw "COMMIT_MISMATCH" }
+          $status = git status --short --untracked-files=no
+          if ($null -ne $status -and $status.ToString().Trim().Length -gt 0) { throw "WORKTREE_NOT_CLEAN" }
+          powershell -NoProfile -ExecutionPolicy Bypass -File tools/provenance/cross_env_verify.ps1 . windows-manifest.json
+          if ((Get-Content windows-manifest.json.sha256).Trim() -notmatch '^[0-9a-f]{64}\s+') { throw "BAD_MANIFEST_HASH" }
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-cross-environment-manifest
+          path: |
+            windows-manifest.json
+            windows-manifest.json.sha256
+
+  cross-platform-equivalence:
+    name: Cross-Platform Manifest Equivalence
+    needs: [linux-independent, windows-independent]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: linux-cross-environment-manifest
+          path: linux
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-cross-environment-manifest
+          path: windows
+
+      - name: Compare canonical manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(jq -r '.schema' linux/linux-manifest.json)" = "rightsframes.cross-environment-manifest/v2"
+          test "$(jq -r '.commit' linux/linux-manifest.json)" = "${GITHUB_SHA}"
+          test "$(jq -r '.commit' windows/windows-manifest.json)" = "${GITHUB_SHA}"
+          test "$(jq -r '.tracked_files | length' linux/linux-manifest.json)" = "$(jq -r '.tracked_files | length' windows/windows-manifest.json)"
+          jq -S -c '.tracked_files |= sort_by(.path)' linux/linux-manifest.json > linux/canonical.json
+          jq -S -c '.tracked_files |= sort_by(.path)' windows/windows-manifest.json > windows/canonical.json
+          L="$(sha256sum linux/canonical.json | awk '{print $1}')"
+          W="$(sha256sum windows/canonical.json | awk '{print $1}')"
+          printf '%s\n' "LINUX_CANONICAL_SHA256=$L"
+          printf '%s\n' "WINDOWS_CANONICAL_SHA256=$W"
+          test "$L" = "$W"
+          cmp -s linux/canonical.json windows/canonical.json
+          printf '%s\n' "CANONICAL_MANIFESTS=IDENTICAL"
+          printf '%s\n' "CROSS_PLATFORM_REPRODUCIBILITY=VERIFIED"
+
+  provenance-policy:
+    name: Provenance Policy
+    needs: cross-platform-equivalence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Enforce provenance policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f tools/provenance/cross_env_verify.py
+          test -f tools/provenance/cross_env_verify.ps1
+          test -f .github/workflows/cross-environment-provenance.yml
+          git diff --check
+          printf '%s\n' "PROVENANCE_POLICY=VERIFIED"
+          printf '%s\n' "INDEPENDENT_LINUX_VERIFIER=VERIFIED"
+          printf '%s\n' "INDEPENDENT_WINDOWS_VERIFIER=VERIFIED"
+          printf '%s\n' "CROSS_PLATFORM_EQUIVALENCE=VERIFIED"
+          printf '%s\n' "RIGHTSFRAMES_CROSS_ENVIRONMENT_PROVENANCE=VERIFIED"
