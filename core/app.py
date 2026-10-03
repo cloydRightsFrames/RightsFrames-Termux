@@ -1,77 +1,167 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-import rf_core
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.middleware.gzip import GZipMiddleware
+"""RightsFrames hardened API surface."""
+
+from __future__ import annotations
+
+import hmac
+import os
+from typing import Any
+
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from pydantic import BaseModel, ConfigDict, Field
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
-        response = await call_next(request)
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("Referrer-Policy", "no-referrer")
-        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-        response.headers.setdefault("Cache-Control", "no-store")
-        response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
-        response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
-        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-        response.headers.setdefault(
-            "Content-Security-Policy",
-            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-        )
-        response.headers.setdefault("X-DNS-Prefetch-Control", "off")
-        response.headers.setdefault("X-Download-Options", "noopen")
-        return response
+from rf_core import (
+    MAX_ENTRY_TYPE,
+    MAX_PAYLOAD_BYTES,
+    append_entry,
+    create_anchor,
+    health,
+)
 
-app = FastAPI(title="RightsFrames Core")
-app.add_middleware(SecurityHeadersMiddleware)
+MAX_REQUEST_BYTES = 393216
+API_KEY = os.environ.get('RF_API_KEY', '').strip()
+
+app = FastAPI(
+    title='RightsFrames Core',
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+
+# Production perimeter restrictions. Deployment may override the host list
+# through RF_ALLOWED_HOSTS without changing application source.
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get(
+        'RF_ALLOWED_HOSTS',
+        '127.0.0.1,localhost',
+    ).split(',')
+    if host.strip()
+]
+
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=[
-        "localhost",
-        "127.0.0.1",
-        "api.rightsframes.online",
-        "rightsframes.online",
-        "www.rightsframes.online",
-    ],
+    allowed_hosts=ALLOWED_HOSTS,
 )
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://rightsframes.online",
-        "https://www.rightsframes.online",
+        origin.strip()
+        for origin in os.environ.get('RF_ALLOWED_ORIGINS', '').split(',')
+        if origin.strip()
     ],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_headers=['Authorization', 'Content-Type', 'X-API-Key'],
 )
 
-rf_core.init_db()
 
-class Entry(BaseModel):
-    entry_type: str
-    payload: dict
+class EntryRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
 
-@app.post("/entries")
-def create_entry(e: Entry):
-    new_id, h = rf_core.append_entry(e.entry_type, e.payload)
-    return {"id": new_id, "entry_hash": h}
+    entry_type: str = Field(
+        min_length=1,
+        max_length=MAX_ENTRY_TYPE,
+    )
+    payload: dict[str, Any] = Field(default_factory=dict)
 
-@app.get("/verify")
-def verify():
-    ok, msg = rf_core.verify_chain()
-    ok2, msg2 = rf_core.verify_anchors()
-    return {"chain_valid": ok, "chain_message": msg, "anchors_valid": ok2, "anchors_message": msg2}
 
-@app.post("/anchor")
-def anchor():
-    ok, msg = rf_core.create_anchor()
-    if not ok: raise HTTPException(400, msg)
-    return {"message": msg}
+@app.middleware('http')
+async def security_middleware(request: Request, call_next):
+    content_length = request.headers.get('content-length')
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BYTES:
+                return JSONResponse(
+                    {'detail': 'request body exceeds maximum size'},
+                    status_code=413,
+                )
+        except ValueError:
+            return JSONResponse(
+                {'detail': 'invalid content-length'},
+                status_code=400,
+            )
+
+    response = await call_next(request)
+
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    response.headers['Content-Security-Policy'] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    response.headers['Cross-Origin-Opener-Policy'] = 'same-origin'
+    response.headers['Cross-Origin-Resource-Policy'] = 'same-origin'
+
+    return response
+
+
+def _require_api_key(
+    authorization: str | None,
+    x_api_key: str | None,
+) -> None:
+    if not API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail='write authentication is not configured',
+        )
+
+    supplied = ''
+
+    if x_api_key:
+        supplied = x_api_key.strip()
+    elif authorization and authorization.startswith('Bearer '):
+        supplied = authorization[7:].strip()
+
+    if not supplied or not hmac.compare_digest(supplied, API_KEY):
+        raise HTTPException(
+            status_code=401,
+            detail='authentication required',
+            headers={'WWW-Authenticate': 'Bearer'},
+        )
+
+
+@app.get('/health')
+def health_endpoint():
+    return health()
+
+
+@app.post('/entries', status_code=201)
+def create_entry(
+    body: EntryRequest,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+):
+    _require_api_key(authorization, x_api_key)
+
+    try:
+        return append_entry(
+            body.entry_type,
+            body.payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+
+@app.post('/anchor', status_code=201)
+def anchor(
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None),
+):
+    _require_api_key(authorization, x_api_key)
+
+    try:
+        return create_anchor()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
