@@ -28,3 +28,10 @@ def test_policy_fail_closed():
 def test_readiness():
     result = readiness({"ok": lambda: "ready", "bad": lambda: (_ for _ in ()).throw(RuntimeError("no"))})
     assert result["ready"] is False
+
+
+def test_provenance_digest(tmp_path):
+    from enterprise.control_plane.provenance import sha256_file
+    artifact = tmp_path / "artifact.bin"
+    artifact.write_bytes(b"rightsframes")
+    assert len(sha256_file(artifact)) == 64
