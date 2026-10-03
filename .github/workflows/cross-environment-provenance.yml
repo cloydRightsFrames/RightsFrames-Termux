@@ -45,6 +45,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Normalize Windows checkout to Git blob content
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          git config core.autocrlf false
+          git checkout -- .
+          git config core.autocrlf false
+
       - name: Verify repository state
         shell: pwsh
         run: |
