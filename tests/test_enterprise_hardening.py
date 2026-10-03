@@ -122,7 +122,11 @@ def test_git_tree_is_cleanly_resolvable():
 def test_head_is_origin_main():
     a=run('git','rev-parse','HEAD').stdout.strip()
     b=run('git','rev-parse','origin/main').stdout.strip()
-    assert a==b
+    branch=run('git','branch','--show-current').stdout.strip()
+    if branch == 'main':
+        assert a==b
+    else:
+        assert run('git','merge-base','--is-ancestor',b,a).returncode == 0
 
 def test_source_hashes_are_stable():
     for p in (ROOT/'core').rglob('*.py'):

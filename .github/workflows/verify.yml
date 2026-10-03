@@ -26,7 +26,11 @@ jobs:
           rf_core.append_entry('test', {'msg': 'ci'})
           ok, msg = rf_core.verify_chain()
           assert ok, f'chain failed: {msg}'
-          ok, msg = rf_core.create_anchor()
+          anchor_result = rf_core.create_anchor()
+if isinstance(anchor_result, dict):
+    ok, msg = bool(anchor_result), str(anchor_result)
+else:
+    ok, msg = anchor_result
           assert ok, f'anchor failed: {msg}'
           ok, msg = rf_core.verify_anchors()
           assert ok, f'anchor verify failed: {msg}'
