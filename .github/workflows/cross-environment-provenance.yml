@@ -45,14 +45,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Normalize Windows checkout to Git blob content
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          git config core.autocrlf false
-          git checkout -- .
-          git config core.autocrlf false
-
       - name: Verify repository state
         shell: pwsh
         run: |
@@ -89,7 +81,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(jq -r '.schema' linux/linux-manifest.json)" = "rightsframes.cross-environment-manifest/v1"
+          test "$(jq -r '.schema' linux/linux-manifest.json)" = "rightsframes.cross-environment-manifest/v2"
           test "$(jq -r '.commit' linux/linux-manifest.json)" = "${GITHUB_SHA}"
           test "$(jq -r '.commit' windows/windows-manifest.json)" = "${GITHUB_SHA}"
           test "$(jq -r '.tracked_files | length' linux/linux-manifest.json)" = "$(jq -r '.tracked_files | length' windows/windows-manifest.json)"
@@ -97,10 +89,10 @@ jobs:
           jq -S -c . windows/windows-manifest.json > windows/canonical.json
           L="$(sha256sum linux/canonical.json | awk '{print $1}')"
           W="$(sha256sum windows/canonical.json | awk '{print $1}')"
-          test "$L" = "$W"
-          cmp -s linux/canonical.json windows/canonical.json
           printf '%s\n' "LINUX_CANONICAL_SHA256=$L"
           printf '%s\n' "WINDOWS_CANONICAL_SHA256=$W"
+          test "$L" = "$W"
+          cmp -s linux/canonical.json windows/canonical.json
           printf '%s\n' "CANONICAL_MANIFESTS=IDENTICAL"
           printf '%s\n' "CROSS_PLATFORM_REPRODUCIBILITY=VERIFIED"
 
