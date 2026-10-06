@@ -1,0 +1,96 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "03:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "security-team"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps):"
+      include: "scope"
+    rebase-strategy: "auto"
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "03:15"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "security-team"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore(deps):"
+      include: "scope"
+    rebase-strategy: "auto"
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "03:30"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "security-team"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker):"
+      include: "scope"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "security-team"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci:"
+      include: "scope"
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      time: "03:45"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "security-team"
+    labels:
+      - "dependencies"
+      - "go"
+    commit-message:
+      prefix: "chore(deps):"
+      include: "scope"
+  - package-ecosystem: "terraform"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:15"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "security-team"
+    labels:
+      - "dependencies"
+      - "terraform"
+    commit-message:
+      prefix: "chore(terraform):"
+      include: "scope"
