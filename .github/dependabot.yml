@@ -1,6 +1,8 @@
 version: 2
 updates:
   - package-ecosystem: "npm"
+    cooldown:
+      default-days: 7
     directory: "/"
     schedule:
       interval: "daily"
@@ -17,6 +19,8 @@ updates:
       include: "scope"
     rebase-strategy: "auto"
   - package-ecosystem: "pip"
+    cooldown:
+      default-days: 7
     directory: "/"
     schedule:
       interval: "daily"
@@ -33,6 +37,8 @@ updates:
       include: "scope"
     rebase-strategy: "auto"
   - package-ecosystem: "docker"
+    cooldown:
+      default-days: 7
     directory: "/"
     schedule:
       interval: "daily"
@@ -48,6 +54,8 @@ updates:
       prefix: "chore(docker):"
       include: "scope"
   - package-ecosystem: "github-actions"
+    cooldown:
+      default-days: 7
     directory: "/"
     schedule:
       interval: "weekly"
@@ -64,6 +72,8 @@ updates:
       prefix: "ci:"
       include: "scope"
   - package-ecosystem: "gomod"
+    cooldown:
+      default-days: 7
     directory: "/"
     schedule:
       interval: "daily"
@@ -79,6 +89,8 @@ updates:
       prefix: "chore(deps):"
       include: "scope"
   - package-ecosystem: "terraform"
+    cooldown:
+      default-days: 7
     directory: "/"
     schedule:
       interval: "weekly"
