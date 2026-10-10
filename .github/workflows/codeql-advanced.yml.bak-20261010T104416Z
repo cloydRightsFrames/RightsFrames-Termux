@@ -1,0 +1,134 @@
+name: "Advanced CodeQL Analysis"
+on:
+  push:
+    branches: [main, develop, "release/**"]
+  pull_request:
+    branches: [main, develop]
+  schedule:
+    - cron: "0 2 * * 0"
+  workflow_dispatch:
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: false
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+jobs:
+  analyze:
+    name: "CodeQL Analysis - ${{ matrix.language }}"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: "javascript-typescript"
+            runner: "ubuntu-latest"
+          - language: "python"
+            runner: "ubuntu-latest"
+          - language: "go"
+            runner: "ubuntu-latest"
+          - language: "cpp"
+            runner: "ubuntu-latest"
+          - language: "java"
+            runner: "ubuntu-latest"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: github/codeql-action/init@9f759ee644a3e7c15c1390abf49868036c00067b
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
+          config-file: ./.github/codeql-config.yml
+          tools: latest
+      - uses: github/codeql-action/autobuild@9f759ee644a3e7c15c1390abf49868036c00067b
+        if: matrix.language == 'cpp' || matrix.language == 'java'
+      - uses: github/codeql-action/analyze@9f759ee644a3e7c15c1390abf49868036c00067b
+        with:
+          category: "/language:${{ matrix.language }}"
+          upload: always
+  dependency-check:
+    name: "OWASP Dependency Check"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dependency-check/Dependency-Check_Action@75ba02d6183445fe0761d26e836bde58b1560600
+        with:
+          project: ${{ github.repository }}
+          path: "."
+          format: "SARIF"
+      - uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+        if: always() && hashFiles('semgrep.sarif') != '' && hashFiles('trivy-results.sarif') != '' && hashFiles('reports/dependency-check-report.sarif') != ''
+        with:
+          sarif_file: "reports/dependency-check-report.sarif"
+          category: "dependency-check"
+  trivy-scan:
+    name: "Trivy Container & IaC Scan"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
+          severity: "CRITICAL,HIGH,MEDIUM"
+      - uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+        if: always()
+        with:
+          sarif_file: "trivy-results.sarif"
+          category: "trivy"
+  semgrep-scan:
+    name: "Semgrep SAST Analysis"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install pinned Semgrep CLI
+        run: python -m pip install semgrep==1.179.0
+
+      - name: Run Semgrep security rules
+        run: >-
+          semgrep scan
+          --config p/owasp-top-ten
+          --config p/security-audit
+          --config p/ci
+          --sarif
+          --output semgrep.sarif
+      - uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+        if: always()
+        with:
+          sarif_file: "semgrep.sarif"
+          category: "semgrep"
+  secret-scanning:
+    name: "Secret Detection"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9
+        with:
+          path: ./
+          extra_args: --debug
+      - uses: GitGuardian/ggshield-action@7f66d3be9c59a821dcf4f45ee5d929203a1a0b90
+        env:
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+          GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        with:
+          args: scan repo -v

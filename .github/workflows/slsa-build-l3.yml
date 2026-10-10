@@ -24,6 +24,8 @@ jobs:
       digest: ${{ steps.digest.outputs.sha256 }}
       commit: ${{ steps.identity.outputs.commit }}
       tree: ${{ steps.identity.outputs.tree }}
+    env:
+      ART_NAME: ${{ inputs.artifact_name }}
     steps:
       - name: Checkout immutable caller revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -59,7 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          ART="${{ inputs.artifact_name }}"
+          ART="$ART_NAME"
           TAR="${ART%.gz}"
           git archive \
             --format=tar \
@@ -76,15 +78,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          DIGEST="$(sha256sum "dist/${{ inputs.artifact_name }}" | awk '{print $1}')"
-          test -s "dist/${{ inputs.artifact_name }}"
+          DIGEST="$(sha256sum "dist/$ART_NAME" | awk '{print $1}')"
+          test -s "dist/$ART_NAME"
           echo "sha256=$DIGEST" >> "$GITHUB_OUTPUT"
           echo "SLSA_L3_ARTIFACT_SHA256=$DIGEST"
 
       - name: Generate SLSA provenance attestation
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
-          subject-path: dist/${{ inputs.artifact_name }}
+          subject-path: ${{ inputs.artifact_name }}
           show-summary: true
 
       - name: Upload L3 release bundle
