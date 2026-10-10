@@ -132,5 +132,3 @@ jobs:
           GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
           GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
           GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        with:
-          args: repo -v
