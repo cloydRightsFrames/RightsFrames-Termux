@@ -65,7 +65,7 @@ jobs:
             --enableExperimental \
             --enableRetired \
             --noupdate
-      - uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2
         if: always() && hashFiles('reports/dependency-check-report.sarif') != ''
         with:
           sarif_file: "reports/dependency-check-report.sarif"
@@ -85,7 +85,7 @@ jobs:
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH,MEDIUM"
-      - uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2
         if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: "trivy-results.sarif"
@@ -109,7 +109,7 @@ jobs:
           --config p/ci
           --sarif
           --output semgrep.sarif
-      - uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2
         if: always() && hashFiles('semgrep.sarif') != ''
         with:
           sarif_file: "semgrep.sarif"
