@@ -34,19 +34,19 @@ jobs:
           - language: "java"
             runner: "ubuntu-latest"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
           submodules: recursive
-      - uses: github/codeql-action/init@v3
+      - uses: github/codeql-action/init@9f759ee644a3e7c15c1390abf49868036c00067b
         with:
           languages: ${{ matrix.language }}
           queries: security-and-quality
           config-file: ./.github/codeql-config.yml
           tools: latest
-      - uses: github/codeql-action/autobuild@v3
+      - uses: github/codeql-action/autobuild@9f759ee644a3e7c15c1390abf49868036c00067b
         if: matrix.language == 'cpp' || matrix.language == 'java'
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@9f759ee644a3e7c15c1390abf49868036c00067b
         with:
           category: "/language:${{ matrix.language }}"
           upload: always
@@ -57,17 +57,27 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: dependency-check/Dependency-Check_Action@main
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Dependency Check (digest-pinned scanner image)
+        env:
+          PROJECT: ${{ github.repository }}
+        run: |
+          mkdir -p reports
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/github/workspace" \
+            -w /github/workspace \
+            owasp/dependency-check-action@sha256:01d78e8e60df25d1a6d42c85af2d8ce9d64a6fb69e18c6f98736dc1a7919009c \
+            --project "$PROJECT" \
+            --scan . \
+            --format SARIF \
+            --out /github/workspace/reports \
+            --enableExperimental \
+            --enableRetired \
+            --noupdate
+      - uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+        if: always() && hashFiles('reports/dependency-check-report.sarif') != ''
         with:
-          project: ${{ github.repository }}
-          path: "."
-          format: "SARIF"
-          args: -s . --enableExperimental --enableRetired
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
-        with:
-          sarif_file: "dependency-check-report.sarif"
+          sarif_file: "reports/dependency-check-report.sarif"
           category: "dependency-check"
   trivy-scan:
     name: "Trivy Container & IaC Scan"
@@ -76,16 +86,16 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@master
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: "fs"
           scan-ref: "."
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH,MEDIUM"
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+      - uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+        if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: "trivy-results.sarif"
           category: "trivy"
@@ -96,13 +106,20 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: returntocorp/semgrep-action@v1
-        with:
-          generateSarif: true
-          config: "p/owasp-top-ten p/security-audit p/ci"
-      - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install pinned Semgrep CLI
+        run: python -m pip install semgrep==1.179.0
+
+      - name: Run Semgrep security rules
+        run: >-
+          semgrep scan
+          --config p/owasp-top-ten
+          --config p/security-audit
+          --config p/ci
+          --sarif
+          --output semgrep.sarif
+      - uses: github/codeql-action/upload-sarif@9f759ee644a3e7c15c1390abf49868036c00067b
+        if: always() && hashFiles('semgrep.sarif') != ''
         with:
           sarif_file: "semgrep.sarif"
           category: "semgrep"
@@ -112,16 +129,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - uses: trufflesecurity/trufflehog@main
+      - uses: trufflesecurity/trufflehog@e76dff8a7e57d6df0c60ad8cbf5d5cba505a8fc9
         with:
           path: ./
-          base: ${{ github.event.repository.default_branch }}
-          head: HEAD
           extra_args: --debug
-      - uses: GitGuardian/ggshield-action@master
+      - uses: GitGuardian/ggshield-action@7f66d3be9c59a821dcf4f45ee5d929203a1a0b90
         env:
           GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
           GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
