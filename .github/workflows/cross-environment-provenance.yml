@@ -30,7 +30,7 @@ jobs:
           test "$(jq -r '.commit' linux-manifest.json)" = "${GITHUB_SHA}"
           test "$(jq -r '.tracked_file_count' linux-manifest.json)" -gt 0
 
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: linux-cross-environment-manifest
           path: |
@@ -55,7 +55,7 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File tools/provenance/cross_env_verify.ps1 . windows-manifest.json
           if ((Get-Content windows-manifest.json.sha256).Trim() -notmatch '^[0-9a-f]{64}\s+') { throw "BAD_MANIFEST_HASH" }
 
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: windows-cross-environment-manifest
           path: |
