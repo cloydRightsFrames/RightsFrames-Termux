@@ -60,7 +60,7 @@ jobs:
           sha256sum dist/source-integrity/* > dist/source-integrity/SHA256SUMS
 
       - name: Upload source identity
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: source-identity-${{ github.sha }}
           path: dist/source-integrity
@@ -160,7 +160,7 @@ jobs:
           git rev-parse HEAD^{tree} > dist/BUILD-A-TREE
 
       - name: Upload build A
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: rightsframes-build-a-${{ github.sha }}
           path: |
@@ -208,7 +208,7 @@ jobs:
           git rev-parse HEAD^{tree} > dist/BUILD-B-TREE
 
       - name: Upload build B
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: rightsframes-build-b-${{ github.sha }}
           path: |
@@ -289,7 +289,7 @@ jobs:
           python3 -m json.tool canonical/reproducibility.json >/dev/null
 
       - name: Upload canonical artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: rightsframes-canonical-${{ github.sha }}
           path: canonical
@@ -387,7 +387,7 @@ jobs:
           python3 -m json.tool dist/release-manifest.json >/dev/null
 
       - name: Upload release evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: rightsframes-release-evidence-${{ github.sha }}
           path: dist/release-manifest.json
