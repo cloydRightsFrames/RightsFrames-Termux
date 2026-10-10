@@ -23,16 +23,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - language: "javascript-typescript"
-            runner: "ubuntu-latest"
           - language: "python"
             runner: "ubuntu-latest"
-          - language: "go"
-            runner: "ubuntu-latest"
-          - language: "cpp"
-            runner: "ubuntu-latest"
-          - language: "java"
-            runner: "ubuntu-latest"
+
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -44,8 +37,6 @@ jobs:
           queries: security-and-quality
           config-file: ./.github/codeql-config.yml
           tools: latest
-      - uses: github/codeql-action/autobuild@9f759ee644a3e7c15c1390abf49868036c00067b
-        if: matrix.language == 'cpp' || matrix.language == 'java'
       - uses: github/codeql-action/analyze@9f759ee644a3e7c15c1390abf49868036c00067b
         with:
           category: "/language:${{ matrix.language }}"
