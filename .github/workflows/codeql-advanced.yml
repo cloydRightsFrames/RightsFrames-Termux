@@ -133,4 +133,4 @@ jobs:
           GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
           GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         with:
-          args: secret scan repo -v
+          args: repo -v
