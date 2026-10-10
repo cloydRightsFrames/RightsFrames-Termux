@@ -29,9 +29,12 @@ jobs:
       - name: Compile control plane
         shell: bash
         run: python -m py_compile enterprise/control_plane/*.py
+      - name: Install test dependencies
+        run: python -m pip install pytest
+
       - name: Run control-plane tests
         shell: bash
-        run: python -m unittest discover -s tests -p test_enterprise_control_plane.py -v
+        run: python -m pytest tests/test_enterprise_control_plane.py -v
       - name: Verify readiness
         shell: bash
         run: python -m enterprise.control_plane.cli readiness
