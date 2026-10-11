@@ -564,8 +564,16 @@ def verify_anchors() -> tuple[bool, str]:
 
 
 def health() -> dict[str, Any]:
+    import logging
+    log = logging.getLogger('rightsframes.core')
     chain_ok, chain_reason = verify_chain()
     anchor_ok, anchor_reason = verify_anchors()
+    if not chain_ok:
+        log.warning('ledger verification failed: %s', chain_reason)
+        chain_reason = 'verification failed'
+    if not anchor_ok:
+        log.warning('anchor verification failed: %s', anchor_reason)
+        anchor_reason = 'verification failed'
 
     return {
         'service': 'rightsframes-core',
