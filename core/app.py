@@ -128,7 +128,13 @@ def _require_api_key(
 
 @app.get('/health')
 def health_endpoint():
-    return health()
+    report = health()
+    return {
+        'service': report['service'],
+        'status': report['status'],
+        'ledger_ok': report['ledger']['ok'],
+        'anchors_ok': report['anchors']['ok'],
+    }
 
 
 @app.post('/entries', status_code=201)
