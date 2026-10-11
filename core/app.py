@@ -147,7 +147,7 @@ def create_entry(
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
+            detail='invalid request',
         ) from exc
 
 
@@ -163,5 +163,5 @@ def anchor(
     except ValueError as exc:
         raise HTTPException(
             status_code=409,
-            detail=str(exc),
+            detail='invalid request',
         ) from exc
