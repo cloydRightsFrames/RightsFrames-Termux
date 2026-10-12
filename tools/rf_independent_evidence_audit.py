@@ -212,7 +212,7 @@ def audit(root: Path, policy_path: Path, policy_pin: str,
 
     return {
         "schema": "rightsframes.evidence-audit-report.v1",
-        "result": "PASS",
+        "result": "PASS_INTEGRITY_ONLY",
         "read_only": True,
         "policy_sha256": policy_pin,
         "manifest_signer_key_id": manifest_signer,
@@ -249,7 +249,7 @@ def main() -> int:
         with args.output.open("x", encoding="utf-8") as stream:
             json.dump(report, stream, indent=2, sort_keys=True)
             stream.write("\n")
-        print("RIGHTSFRAMES_EVIDENCE_AUDIT=PASS")
+        print("RIGHTSFRAMES_EVIDENCE_AUDIT=PASS_INTEGRITY_ONLY")
         return 0
     except (OSError, AuditFailure, TypeError, KeyError) as exc:
         print(f"RIGHTSFRAMES_EVIDENCE_AUDIT=FAIL:{exc}", file=sys.stderr)
