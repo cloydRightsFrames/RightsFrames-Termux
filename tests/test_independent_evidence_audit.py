@@ -82,7 +82,7 @@ def _run(bundle):
 
 def test_valid_signed_bundle_passes(bundle):
     report = _run(bundle)
-    assert report["result"] == "PASS"
+    assert report["result"] == "PASS_INTEGRITY_ONLY"
     assert report["evidence_count"] == 1
     assert report["conclusion_statuses"] == {"C-1": "UNVERIFIED"}
 
