@@ -90,11 +90,15 @@ def inventory(root: Path) -> set[str]:
     result: set[str] = set()
     count = 0
     for base, dirs, names in os.walk(root, followlinks=False):
-        dirs[:] = sorted(d for d in dirs if not (Path(base) / d).is_symlink())
+        if any((Path(base) / d).is_symlink() for d in dirs):
+            raise AuditFailure("symlink directory in evidence root")
+        dirs[:] = sorted(dirs)
         for name in sorted(names):
             path = Path(base) / name
-            if path.is_symlink() or not path.is_file():
-                continue
+            if path.is_symlink():
+                raise AuditFailure(f"symlink in evidence root: {path.relative_to(root)}")
+            if not path.is_file():
+                raise AuditFailure(f"non-regular entry in evidence root: {path.relative_to(root)}")
             count += 1
             if count > MAX_FILES:
                 raise AuditFailure("evidence file count exceeds limit")
@@ -177,10 +181,13 @@ def audit(root: Path, policy_path: Path, policy_pin: str,
     subjects = provenance.get("subjects")
     if not isinstance(subjects, list) or not subjects:
         raise AuditFailure("provenance subjects missing")
+    subject_paths = [s.get("path") for s in subjects if isinstance(s, dict)]
+    if len(subject_paths) != len(subjects) or len(set(subject_paths)) != len(subject_paths):
+        raise AuditFailure("malformed or duplicate provenance subjects")
+    if set(subject_paths) != set(required):
+        raise AuditFailure("provenance subject inventory is incomplete or unexpected")
     for subject in subjects:
-        if not isinstance(subject, dict):
-            raise AuditFailure("malformed provenance subject")
-        name = subject.get("path")
+        name = subject["path"]
         if name not in digests or subject.get("sha256") != digests[name]:
             raise AuditFailure("provenance subject does not match manifest evidence")
 
