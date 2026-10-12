@@ -166,3 +166,14 @@ def test_policy_tampering_is_rejected(bundle):
     bundle["policy_path"].write_text('{"schema":"rightsframes.audit-policy.v1"}', encoding="utf-8")
     with pytest.raises(AuditFailure, match="policy SHA-256 pin mismatch"):
         _run(bundle)
+
+
+def test_incomplete_provenance_subject_inventory_is_rejected(bundle):
+    provenance = bundle["provenance"]
+    unsigned = dict(provenance)
+    unsigned.pop("signature")
+    unsigned["subjects"] = []
+    provenance = _signed(unsigned, bundle["private"], bundle["key_id"])
+    bundle["provenance_path"].write_text(json.dumps(provenance), encoding="utf-8")
+    with pytest.raises(AuditFailure, match="provenance subjects missing"):
+        _run(bundle)
