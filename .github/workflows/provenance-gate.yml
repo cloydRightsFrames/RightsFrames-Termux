@@ -228,13 +228,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download build A
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: rightsframes-build-a-${{ github.sha }}
           path: build-a
 
       - name: Download build B
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: rightsframes-build-b-${{ github.sha }}
           path: build-b
@@ -324,7 +324,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download canonical artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: rightsframes-slsa3-${{ github.sha }}
           path: dist
@@ -408,19 +408,19 @@ jobs:
       attestations: write
     steps:
       - name: Download canonical artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: rightsframes-slsa3-${{ github.sha }}
           path: dist
 
       - name: Download independent reproducibility artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: rightsframes-canonical-${{ github.sha }}
           path: reproducibility
 
       - name: Download release evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: rightsframes-release-evidence-${{ github.sha }}
           path: dist
