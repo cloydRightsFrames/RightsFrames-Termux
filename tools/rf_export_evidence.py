@@ -98,8 +98,8 @@ def export_bundle(data_dir: str | os.PathLike, out_path: str | os.PathLike) -> d
     except Exception:
         try:
             out.unlink()
-        except OSError:
-            pass
+        except OSError as cleanup_err:
+            print(f'warning: failed to remove incomplete output {out}: {cleanup_err}', file=sys.stderr)
         raise
     return manifest
 
