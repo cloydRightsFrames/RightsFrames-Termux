@@ -165,3 +165,8 @@ def anchor(
             status_code=409,
             detail=str(exc),
         ) from exc
+
+# --- API v1: per-principal credentials, scopes, audited operations ---
+from rf_api_v1 import router as _api_v1_router  # noqa: E402
+
+app.include_router(_api_v1_router)
