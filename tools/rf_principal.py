@@ -38,7 +38,7 @@ def main(argv=None) -> int:
                 print(f'EXISTS={args.id}')
                 return 0
             scopes = [s.strip() for s in args.scopes.split(',') if s.strip()]
-            token = rf_auth.create_principal(args.id, scopes, args.label, actor)
+            rf_auth.create_principal(args.id, scopes, args.label, actor)
             print(f'PRINCIPAL={args.id}')
             print('SCOPES=' + ','.join(sorted(set(scopes))))
             print('TOKEN=[REDACTED]')
