@@ -148,9 +148,11 @@ def ledger_entries(after_id: int = Query(0, ge=0), limit: int = Query(100, ge=1,
 def ledger_verify(principal: dict = Depends(require('ledger:read'))):
     chain_ok, chain_reason = rf_core.verify_chain()
     anchors_ok, anchors_reason = rf_core.verify_anchors()
-    return {'ok': chain_ok and anchors_ok,
-            'chain': {'ok': chain_ok, 'detail': chain_reason},
-            'anchors': {'ok': anchors_ok, 'detail': anchors_reason}}
+    return {
+        'ok': chain_ok and anchors_ok,
+        'chain': {'ok': chain_ok, 'detail': chain_reason if chain_ok else 'verification failed'},
+        'anchors': {'ok': anchors_ok, 'detail': anchors_reason if anchors_ok else 'verification failed'},
+    }
 
 
 @router.get('/anchors')
