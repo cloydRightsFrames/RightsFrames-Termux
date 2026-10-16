@@ -4,6 +4,12 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 router = APIRouter(tags=["UnifiedAIHub"])
+def _is_within_root(target: Path, root: Path) -> bool:
+    try:
+        target.relative_to(root)
+        return True
+    except ValueError:
+        return False
 def _config():
     base=os.environ.get("UNIFIEDAIHUB_BASE_URL","http://127.0.0.1:8766").rstrip("/")
     if not base.startswith("http://127.0.0.1:") and not base.startswith("http://localhost:") and not base.startswith("https://"):
@@ -48,7 +54,7 @@ def hub_ingest(req: IngestInput):
     if not roots: raise HTTPException(403,"Ingestion disabled: configure approved UNIFIEDAIHUB_ALLOWED_INGEST_ROOTS")
     try: target=Path(req.path).expanduser().resolve(strict=True)
     except (OSError,RuntimeError): raise HTTPException(400,"Invalid ingestion path") from None
-    if not target.is_file() or not any(target==r or r in target.parents for r in roots): raise HTTPException(403,"Path is not an approved ingestion file")
+    if not target.is_file() or not any(_is_within_root(target, r) for r in roots): raise HTTPException(403,"Path is not an approved ingestion file")
     if target.suffix.lower() not in {".json",".txt",".md",".log",".csv",".xml",".html"}: raise HTTPException(415,"Unsupported ingestion file type")
     if target.stat().st_size>25*1024*1024: raise HTTPException(413,"File exceeds 25 MiB ingestion limit")
     return _request("/v1/ingest","POST",{"path":str(target)})
