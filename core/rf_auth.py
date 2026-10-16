@@ -56,6 +56,8 @@ def _rollback(conn: sqlite3.Connection) -> None:
     try:
         conn.execute('ROLLBACK')
     except sqlite3.Error:
+        # Best-effort cleanup: avoid masking the original exception path
+        # if rollback itself fails (for example, no active transaction).
         pass
 
 
