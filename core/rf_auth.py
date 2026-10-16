@@ -22,7 +22,23 @@ SCOPES = frozenset({
 })
 TOKEN_PREFIX = 'rfp1'
 _ID = re.compile(r'^[a-z0-9][a-z0-9-]{2,39}$')
-_DUMMY_HASH = hashlib.sha256(b'rf-dummy-credential').hexdigest()
+_PBKDF2_NAME = 'sha256'
+_PBKDF2_ITERATIONS = 310_000
+_DUMMY_SALT_HEX = secrets.token_hex(16)
+_DUMMY_HASH = hashlib.pbkdf2_hmac(
+    _PBKDF2_NAME, b'rf-dummy-credential', bytes.fromhex(_DUMMY_SALT_HEX), _PBKDF2_ITERATIONS
+).hex()
+
+
+def _token_hash(secret: str, salt_hex: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        _PBKDF2_NAME, secret.encode('utf-8'), bytes.fromhex(salt_hex), _PBKDF2_ITERATIONS
+    ).hex()
+
+
+def _new_token_hash(secret: str) -> tuple[str, str]:
+    salt_hex = secrets.token_hex(16)
+    return salt_hex, _token_hash(secret, salt_hex)
 
 
 class Conflict(ValueError):
@@ -82,6 +98,8 @@ def create_principal(principal_id: str, scopes: Any, label: str = '', actor: str
         raise ValueError('invalid label')
     scope_list = validate_scopes(scopes)
     secret = secrets.token_urlsafe(32)
+    salt_hex, token_hash = _new_token_hash(secret)
+    stored_hash = f'pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt_hex}${token_hash}'
     conn = _db()
     try:
         conn.execute('BEGIN IMMEDIATE')
@@ -89,8 +107,7 @@ def create_principal(principal_id: str, scopes: Any, label: str = '', actor: str
             conn.execute(
                 'INSERT INTO principals (id, scopes, label, token_hash, created_at, revoked_at) '
                 'VALUES (?, ?, ?, ?, ?, NULL)',
-                (principal_id, json.dumps(scope_list), label,
-                 hashlib.sha256(secret.encode('utf-8')).hexdigest(), rf_core._utc_now()),
+                (principal_id, json.dumps(scope_list), label, stored_hash, rf_core._utc_now()),
             )
         except sqlite3.IntegrityError:
             raise Conflict('principal already exists') from None
@@ -119,8 +136,19 @@ def authenticate(token: Any) -> dict[str, Any] | None:
         ).fetchone()
     finally:
         conn.close()
-    supplied = hashlib.sha256(parts[2].encode('utf-8')).hexdigest()
-    matched = hmac.compare_digest(supplied, row[1] if row else _DUMMY_HASH)
+    stored = row[1] if row else f'pbkdf2_sha256${_PBKDF2_ITERATIONS}${_DUMMY_SALT_HEX}${_DUMMY_HASH}'
+    try:
+        scheme, iterations_s, salt_hex, expected = stored.split('$', 3)
+        if scheme != 'pbkdf2_sha256':
+            raise ValueError('unsupported hash scheme')
+        iterations = int(iterations_s)
+        supplied = hashlib.pbkdf2_hmac(
+            _PBKDF2_NAME, parts[2].encode('utf-8'), bytes.fromhex(salt_hex), iterations
+        ).hex()
+    except (ValueError, TypeError):
+        supplied = _DUMMY_HASH
+        expected = _DUMMY_HASH
+    matched = hmac.compare_digest(supplied, expected if row else _DUMMY_HASH)
     if row is None or not matched or row[2] is not None:
         return None
     return {'id': parts[1], 'scopes': frozenset(json.loads(row[0]))}
