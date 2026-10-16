@@ -41,7 +41,7 @@ def main(argv=None) -> int:
             token = rf_auth.create_principal(args.id, scopes, args.label, actor)
             print(f'PRINCIPAL={args.id}')
             print('SCOPES=' + ','.join(sorted(set(scopes))))
-            print(f'TOKEN={token}')
+            print('TOKEN=[REDACTED]')
         elif args.cmd == 'list':
             print(json.dumps(rf_auth.list_principals(), indent=2))
         else:
