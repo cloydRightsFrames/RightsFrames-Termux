@@ -88,6 +88,7 @@ def _loads(text: str) -> Any:
                           parse_constant=_reject_constant)
     except (ValueError, RecursionError) as exc:
         _fail(f'invalid JSON: {exc}')
+        raise  # unreachable; keeps control flow explicit for static analysis
 
 
 def _read_members(path: str) -> dict[str, bytes]:
