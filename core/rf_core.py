@@ -309,8 +309,8 @@ def verify_chain() -> tuple[bool, str]:
 
         try:
             _validate_stored_payload(payload)
-        except Exception as exc:
-            return False, f'payload invalid at {entry_id}: {exc}'
+        except Exception:
+            return False, f'payload invalid at {entry_id}'
 
         expected_hash = _sha256(
             _entry_material(
@@ -474,8 +474,8 @@ def verify_anchors() -> tuple[bool, str]:
     try:
         _, public, current_key_id = load_or_create_keypair()
         anchors = _read_anchors()
-    except Exception as exc:
-        return False, str(exc)
+    except Exception:
+        return False, 'anchor verification initialization failed'
 
     if not anchors:
         return True, 'no anchors'
@@ -494,8 +494,8 @@ def verify_anchors() -> tuple[bool, str]:
                 anchor['signature'],
                 validate=True,
             )
-        except Exception as exc:
-            return False, f'anchor {index} malformed: {exc}'
+        except Exception:
+            return False, f'anchor {index} malformed'
 
         if sequence != index:
             return False, f'anchor sequence mismatch at {index}'
@@ -591,8 +591,8 @@ def verify_anchors() -> tuple[bool, str]:
                     )
         finally:
             anchor_conn.close()
-    except sqlite3.Error as exc:
-        return False, f'ledger unreadable: {exc}'
+    except sqlite3.Error:
+        return False, 'ledger unreadable'
 
     current_count = int(row[0]) if row else 0
     current_head = str(row[1]) if row else '0' * 64
