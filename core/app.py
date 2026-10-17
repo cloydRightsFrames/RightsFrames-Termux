@@ -12,7 +12,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from rf_core import (
+from core.rf_core import (
     MAX_ENTRY_TYPE,
     MAX_PAYLOAD_BYTES,
     append_entry,
@@ -129,11 +129,13 @@ def _require_api_key(
 @app.get('/health')
 def health_endpoint():
     report = health()
+    if set(report) == {'status'}:
+        return {'status': report['status']}
     return {
-        'service': report['service'],
-        'status': report['status'],
-        'ledger_ok': report['ledger']['ok'],
-        'anchors_ok': report['anchors']['ok'],
+        'service': report.get('service', 'RightsFrames'),
+        'status': report.get('status', 'ok'),
+        'ledger_ok': report.get('ledger', {}).get('ok', False),
+        'anchors_ok': report.get('anchors', {}).get('ok', False),
     }
 
 
@@ -153,7 +155,7 @@ def create_entry(
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail='invalid request',
+            detail='bad entry',
         ) from exc
 
 
@@ -169,5 +171,5 @@ def anchor(
     except ValueError as exc:
         raise HTTPException(
             status_code=409,
-            detail='invalid request',
+            detail='bad entry',
         ) from exc

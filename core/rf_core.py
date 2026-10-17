@@ -161,7 +161,8 @@ def load_or_create_keypair() -> tuple[Ed25519PrivateKey, bytes, str]:
 
 def init_db() -> None:
     _secure_directory()
-    with sqlite3.connect(DB_PATH) as conn:
+    conn = sqlite3.connect(DB_PATH)
+    try:
         conn.execute('PRAGMA journal_mode=WAL')
         conn.execute('PRAGMA synchronous=FULL')
         conn.execute('PRAGMA foreign_keys=ON')
@@ -183,6 +184,11 @@ def init_db() -> None:
             'ON ledger_entries(entry_hash)'
         )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def _connect() -> sqlite3.Connection:
@@ -192,8 +198,12 @@ def _connect() -> sqlite3.Connection:
         timeout=5,
         isolation_level=None,
     )
-    conn.execute('PRAGMA foreign_keys=ON')
-    conn.execute('PRAGMA busy_timeout=5000')
+    try:
+        conn.execute('PRAGMA foreign_keys=ON')
+        conn.execute('PRAGMA busy_timeout=5000')
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
@@ -570,10 +580,8 @@ def health() -> dict[str, Any]:
     anchor_ok, anchor_reason = verify_anchors()
     if not chain_ok:
         log.warning('ledger verification failed: %s', chain_reason)
-        chain_reason = 'verification failed'
     if not anchor_ok:
         log.warning('anchor verification failed: %s', anchor_reason)
-        anchor_reason = 'verification failed'
 
     return {
         'service': 'rightsframes-core',
