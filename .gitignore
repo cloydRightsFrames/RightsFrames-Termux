@@ -24,3 +24,5 @@ audit/
 *.pyc
 tools/lynis-download/
 WebSift/
+*.sqlite
+*.db
