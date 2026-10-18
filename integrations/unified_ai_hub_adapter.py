@@ -4,6 +4,10 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 router = APIRouter(tags=["UnifiedAIHub"])
+# Opener limited to http/https: no file://, ftp:// or data: handlers are installed.
+_OPENER=urllib.request.OpenerDirector()
+for _h in (urllib.request.HTTPHandler(),urllib.request.HTTPSHandler(),urllib.request.HTTPRedirectHandler(),urllib.request.HTTPDefaultErrorHandler(),urllib.request.HTTPErrorProcessor()):
+    _OPENER.add_handler(_h)
 def _is_within_root(target: Path, root: Path) -> bool:
     try:
         target.relative_to(root)
@@ -22,7 +26,7 @@ def _request(path,method="GET",payload=None):
     body=None if payload is None else json.dumps(payload).encode("utf-8")
     req=urllib.request.Request(base+path,data=body,method=method,headers={"Authorization":"Bearer "+token,"Accept":"application/json","Content-Type":"application/json"})
     try:
-        with urllib.request.urlopen(req,timeout=8) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- URL validated by _config() (loopback HTTP or HTTPS only)
+        with _OPENER.open(req,timeout=8) as response:
             raw=response.read(2*1024*1024+1)
             if len(raw)>2*1024*1024: raise HTTPException(502,"UnifiedAIHub response exceeded limit")
             return json.loads(raw.decode("utf-8"))
