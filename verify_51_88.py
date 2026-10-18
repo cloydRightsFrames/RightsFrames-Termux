@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import subprocess,sys,os,json,hashlib,tarfile,time,shutil,tempfile,traceback
+import subprocess, sys, os, json, hashlib, tarfile, time, tempfile, traceback
 
 R=Path.cwd().resolve()
 START,END=51,88

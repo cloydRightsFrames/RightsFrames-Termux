@@ -1,4 +1,4 @@
-import hashlib, json, os, shutil, subprocess, sys, tempfile, time
+import json, os, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
 ROOT=Path.cwd()

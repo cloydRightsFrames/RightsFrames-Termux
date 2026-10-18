@@ -26,3 +26,4 @@ tools/lynis-download/
 WebSift/
 *.sqlite
 *.db
+core/app.py.pre-*

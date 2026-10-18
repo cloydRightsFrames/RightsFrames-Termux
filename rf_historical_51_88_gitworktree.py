@@ -322,7 +322,7 @@ def main():
                 artifact / "source-manifest.json",
             )
 
-            probe = package_probe(
+            package_probe(
                 worktree,
                 artifact / "environment.log",
             )
