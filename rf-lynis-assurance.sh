@@ -51,7 +51,7 @@ VERSION="$(
     printf '  "lynis_version": "%s",\n' "$(
         printf '%s' "$VERSION" |
         sed 's/\\/\\\\/g; s/"/\\"/g'
-    )'
+    )"
     printf '  "root_required": false\n'
     printf '}\n'
 } > "$RUN/metadata.json"
