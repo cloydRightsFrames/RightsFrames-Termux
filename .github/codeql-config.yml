@@ -1,0 +1,22 @@
+name: "Production CodeQL Configuration"
+paths-ignore:
+  - ".git"
+  - "**/*.test.js"
+  - "**/*.spec.js"
+  - "**/test/**"
+  - "**/tests/**"
+  - "**/node_modules"
+  - "**/.venv"
+  - "**/venv"
+  - "vendor/"
+  - "build/"
+  - "dist/"
+  - "coverage/"
+queries:
+  - uses: security-and-quality
+  - uses: security-extended
+query-filters:
+  - exclude:
+      kind: "problem"
+      precision: "low"
+disable-default-queries: false

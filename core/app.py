@@ -128,7 +128,13 @@ def _require_api_key(
 
 @app.get('/health')
 def health_endpoint():
-    return health()
+    report = health()
+    return {
+        'service': report['service'],
+        'status': report['status'],
+        'ledger_ok': report['ledger']['ok'],
+        'anchors_ok': report['anchors']['ok'],
+    }
 
 
 @app.post('/entries', status_code=201)
@@ -147,7 +153,7 @@ def create_entry(
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
-            detail=str(exc),
+            detail='invalid request',
         ) from exc
 
 
@@ -163,7 +169,7 @@ def anchor(
     except ValueError as exc:
         raise HTTPException(
             status_code=409,
-            detail=str(exc),
+            detail='invalid request',
         ) from exc
 
 # --- API v1: per-principal credentials, scopes, audited operations ---

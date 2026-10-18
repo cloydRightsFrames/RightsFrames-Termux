@@ -15,7 +15,7 @@ jobs:
     name: Independent Linux Manifest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
@@ -30,7 +30,7 @@ jobs:
           test "$(jq -r '.commit' linux-manifest.json)" = "${GITHUB_SHA}"
           test "$(jq -r '.tracked_file_count' linux-manifest.json)" -gt 0
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: linux-cross-environment-manifest
           path: |
@@ -41,7 +41,7 @@ jobs:
     name: Independent Windows Manifest
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
@@ -55,7 +55,7 @@ jobs:
           powershell -NoProfile -ExecutionPolicy Bypass -File tools/provenance/cross_env_verify.ps1 . windows-manifest.json
           if ((Get-Content windows-manifest.json.sha256).Trim() -notmatch '^[0-9a-f]{64}\s+') { throw "BAD_MANIFEST_HASH" }
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: windows-cross-environment-manifest
           path: |
@@ -67,12 +67,12 @@ jobs:
     needs: [linux-independent, windows-independent]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: linux-cross-environment-manifest
           path: linux
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: windows-cross-environment-manifest
           path: windows
@@ -101,7 +101,7 @@ jobs:
     needs: cross-platform-equivalence
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
