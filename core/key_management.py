@@ -51,7 +51,7 @@ def save_public_key(public_key, filepath):
     )
 
     path.write_bytes(data)
-    os.chmod(path, 0o644)
+    os.chmod(path, 0o600)
 
 
 def load_public_key(filepath):
