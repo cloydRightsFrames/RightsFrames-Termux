@@ -22,7 +22,7 @@ def _request(path,method="GET",payload=None):
     body=None if payload is None else json.dumps(payload).encode("utf-8")
     req=urllib.request.Request(base+path,data=body,method=method,headers={"Authorization":"Bearer "+token,"Accept":"application/json","Content-Type":"application/json"})
     try:
-        with urllib.request.urlopen(req,timeout=8) as response:
+        with urllib.request.urlopen(req,timeout=8) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected -- URL validated by _config() (loopback HTTP or HTTPS only)
             raw=response.read(2*1024*1024+1)
             if len(raw)>2*1024*1024: raise HTTPException(502,"UnifiedAIHub response exceeded limit")
             return json.loads(raw.decode("utf-8"))
@@ -52,7 +52,16 @@ def hub_ingest(req: IngestInput):
     configured=os.environ.get("UNIFIEDAIHUB_ALLOWED_INGEST_ROOTS","")
     roots=[Path(x).expanduser().resolve() for x in configured.split(os.pathsep) if x.strip()]
     if not roots: raise HTTPException(403,"Ingestion disabled: configure approved UNIFIEDAIHUB_ALLOWED_INGEST_ROOTS")
-    try: target=Path(req.path).expanduser().resolve(strict=True)
+    norm=os.path.normpath(os.path.expanduser(req.path))
+    matched=None
+    for r in roots:
+        rs=str(r)
+        full=os.path.normpath(os.path.join(rs,norm))
+        if full.startswith(rs+os.sep):
+            matched=full
+            break
+    if matched is None: raise HTTPException(403,"Path is not an approved ingestion file")
+    try: target=Path(os.path.realpath(matched)).resolve(strict=True)
     except (OSError,RuntimeError): raise HTTPException(400,"Invalid ingestion path") from None
     if not target.is_file() or not any(_is_within_root(target, r) for r in roots): raise HTTPException(403,"Path is not an approved ingestion file")
     if target.suffix.lower() not in {".json",".txt",".md",".log",".csv",".xml",".html"}: raise HTTPException(415,"Unsupported ingestion file type")
