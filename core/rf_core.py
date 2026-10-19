@@ -146,7 +146,7 @@ def load_or_create_keypair() -> tuple[Ed25519PrivateKey, bytes, str]:
             serialization.Encoding.PEM,
             serialization.PublicFormat.SubjectPublicKeyInfo,
         )
-        _atomic_write(PUBLIC_KEY_PATH, public_pem, 0o644)
+        _atomic_write(PUBLIC_KEY_PATH, public_pem, 0o600)
 
     key_id = _key_id(public)
 
