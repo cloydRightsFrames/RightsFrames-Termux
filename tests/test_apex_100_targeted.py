@@ -279,7 +279,7 @@ def test_rf_core_verify_anchors_rejects_malformed_anchor():
         ok, reason = rf_core.verify_anchors()
 
     assert ok is False
-    assert reason.startswith("anchor 1 malformed:")
+    assert reason == "anchor 1 malformed"
 
 
 def test_rf_core_verify_anchors_rejects_sequence_mismatch():
@@ -663,7 +663,10 @@ def test_rf_core_verify_anchors_load_failure():
         "load_or_create_keypair",
         side_effect=RuntimeError("key load failed"),
     ):
-        assert rf_core.verify_anchors() == (False, "key load failed")
+        assert rf_core.verify_anchors() == (
+            False,
+            "anchor verification initialization failed",
+        )
 
 
 def test_cli_readiness_exception_returns_one(capsys):
