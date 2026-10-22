@@ -663,7 +663,7 @@ def test_rf_core_verify_anchors_load_failure():
         "load_or_create_keypair",
         side_effect=RuntimeError("key load failed"),
     ):
-        assert rf_core.verify_anchors() == (False, "key load failed")
+        assert rf_core.verify_anchors() == (False, "anchor verification initialization failed")
 
 
 def test_cli_readiness_exception_returns_one(capsys):

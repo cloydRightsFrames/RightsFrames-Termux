@@ -505,7 +505,7 @@ def verify_anchors() -> tuple[bool, str]:
                 validate=True,
             )
         except Exception:
-            return False, f'anchor {index} malformed'
+            return False, f'anchor {index} malformed:'
 
         if sequence != index:
             return False, f'anchor sequence mismatch at {index}'
@@ -572,6 +572,18 @@ def verify_anchors() -> tuple[bool, str]:
     finally:
         conn.close()
 
+    current_count = int(row[0]) if row else 0
+    current_head = str(row[1]) if row else '0' * 64
+
+    latest = anchors[-1]
+
+    if int(latest['ledger_count']) > current_count:
+        return False, 'ledger is shorter than latest anchor'
+
+    if int(latest['ledger_count']) == current_count:
+        if latest['ledger_head'] != current_head:
+            return False, 'ledger head differs from latest anchor'
+
     try:
         anchor_conn = _connect()
         try:
@@ -603,18 +615,6 @@ def verify_anchors() -> tuple[bool, str]:
             anchor_conn.close()
     except sqlite3.Error:
         return False, 'ledger unreadable'
-
-    current_count = int(row[0]) if row else 0
-    current_head = str(row[1]) if row else '0' * 64
-
-    latest = anchors[-1]
-
-    if int(latest['ledger_count']) > current_count:
-        return False, 'ledger is shorter than latest anchor'
-
-    if int(latest['ledger_count']) == current_count:
-        if latest['ledger_head'] != current_head:
-            return False, 'ledger head differs from latest anchor'
 
     return True, f'verified {len(anchors)} anchors'
 
