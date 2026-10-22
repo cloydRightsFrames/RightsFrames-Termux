@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import hmac
 import os
 from typing import Any
@@ -86,7 +87,11 @@ async def security_middleware(request: Request, call_next):
                 status_code=400,
             )
 
-    response = await call_next(request)
+    res_or_coro = call_next(request)
+    if inspect.isawaitable(res_or_coro):
+        response = await res_or_coro
+    else:
+        response = res_or_coro
 
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'

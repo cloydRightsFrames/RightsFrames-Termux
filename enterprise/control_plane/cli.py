@@ -112,7 +112,7 @@ def _readiness(policy_path) -> int:
                 "policy": lambda: load_policy(policy_path)["mode"],
             }
         )
-        payload = dict(result) if isinstance(result, dict) else {"allowed": result["allowed"]} if args.command == "evaluate" and hasattr(result, "__getitem__") else result
+        payload = dict(result) if isinstance(result, dict) else result
         print(json.dumps(payload, sort_keys=True, indent=2, default=str))
         return 0 if result["ready"] else 1
     except Exception as exc:
