@@ -90,11 +90,12 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
             os.chmod(path, mode)
         except OSError:
             pass
-        dir_fd = os.open(DATA_DIR, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+        if os.name == 'posix':
+            dir_fd = os.open(str(DATA_DIR), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
     finally:
         if tmp_path.exists():
             tmp_path.unlink()
@@ -318,8 +319,8 @@ def verify_chain() -> tuple[bool, str]:
 
         try:
             _validate_stored_payload(payload)
-        except Exception as exc:
-            return False, f'payload invalid at {entry_id}: {exc}'
+        except Exception:
+            return False, f'payload invalid at {entry_id}'
 
         expected_hash = _sha256(
             _entry_material(
@@ -343,8 +344,22 @@ def verify_chain() -> tuple[bool, str]:
 @contextlib.contextmanager
 def _anchor_lock() -> Iterator[None]:
     _secure_directory()
-    import fcntl
+    if os.name == 'nt':
+        import msvcrt
+        with LOCK_PATH.open('a+b') as handle:
+            if handle.seek(0, os.SEEK_END) == 0:
+                handle.write(b'\x00')
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
 
+    import fcntl
     with LOCK_PATH.open('a+b') as handle:
         os.chmod(LOCK_PATH, 0o600)
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -352,7 +367,6 @@ def _anchor_lock() -> Iterator[None]:
             yield
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-
 
 def _read_anchors() -> list[dict[str, Any]]:
     if not ANCHOR_PATH.exists():
@@ -394,7 +408,6 @@ def _canonical_anchor_hash(core: dict[str, Any]) -> str:
         raise ValueError('anchor core exceeds maximum size')
     return _sha256(encoded)
 
-
 def _append_anchor_line(anchor: dict[str, Any]) -> None:
     _secure_directory()
     line = (_canonical_json(anchor) + '\n').encode('utf-8')
@@ -407,11 +420,12 @@ def _append_anchor_line(anchor: dict[str, Any]) -> None:
         handle.flush()
         os.fsync(handle.fileno())
 
-    dir_fd = os.open(DATA_DIR, os.O_RDONLY)
-    try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
+    if os.name == 'posix':
+        dir_fd = os.open(str(DATA_DIR), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
 
 def create_anchor() -> dict[str, Any]:
@@ -470,8 +484,8 @@ def verify_anchors() -> tuple[bool, str]:
     try:
         _, public, current_key_id = load_or_create_keypair()
         anchors = _read_anchors()
-    except Exception as exc:
-        return False, str(exc)
+    except Exception:
+        return False, 'anchor verification initialization failed'
 
     if not anchors:
         return True, 'no anchors'
@@ -490,8 +504,8 @@ def verify_anchors() -> tuple[bool, str]:
                 anchor['signature'],
                 validate=True,
             )
-        except Exception as exc:
-            return False, f'anchor {index} malformed: {exc}'
+        except Exception:
+            return False, f'anchor {index} malformed'
 
         if sequence != index:
             return False, f'anchor sequence mismatch at {index}'
@@ -557,6 +571,38 @@ def verify_anchors() -> tuple[bool, str]:
         ).fetchone()
     finally:
         conn.close()
+
+    try:
+        anchor_conn = _connect()
+        try:
+            for index, item in enumerate(anchors, 1):
+                anchored_count = int(item['ledger_count'])
+                if anchored_count == 0:
+                    stored_head = '0' * 64
+                else:
+                    found = anchor_conn.execute(
+                        'SELECT entry_hash FROM ledger_entries WHERE id = ?',
+                        (anchored_count,),
+                    ).fetchone()
+                    if found is None:
+                        return (
+                            False,
+                            f'anchor {index} references missing ledger entry '
+                            f'{anchored_count}',
+                        )
+                    stored_head = str(found[0])
+                if not secrets.compare_digest(
+                    stored_head, str(item['ledger_head'])
+                ):
+                    return (
+                        False,
+                        f'anchor {index} ledger head differs from ledger '
+                        f'entry {anchored_count}',
+                    )
+        finally:
+            anchor_conn.close()
+    except sqlite3.Error:
+        return False, 'ledger unreadable'
 
     current_count = int(row[0]) if row else 0
     current_head = str(row[1]) if row else '0' * 64
