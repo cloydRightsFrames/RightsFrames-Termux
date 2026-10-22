@@ -488,7 +488,7 @@ def test_rf_ledger_shorter_than_anchor(tmp_path, monkeypatch):
 
     assert rf.verify_anchors() == (
         False,
-        'ledger is shorter than latest anchor',
+        'anchor 1 references missing ledger entry 1',
     )
 
 
@@ -507,7 +507,7 @@ def test_rf_ledger_head_differs_from_anchor(tmp_path, monkeypatch):
 
     assert rf.verify_anchors() == (
         False,
-        'ledger head differs from latest anchor',
+        'anchor 1 ledger head differs from ledger entry 1',
     )
 
 def test_rf_create_anchor_rejects_invalid_ledger(tmp_path, monkeypatch):
