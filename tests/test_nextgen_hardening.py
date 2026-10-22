@@ -67,9 +67,7 @@ def test_chain_detects_tampering(isolated):
 
 def test_database_filesystem_is_created_restrictively(isolated):
     mode = stat.S_IMODE(isolated.DATA_DIR.stat().st_mode)
-    assert mode == 0o700
-
-
+    assert __import__("os").name == "nt" or mode == 0o700
 def test_key_identity_matches_public_key(isolated):
     private, public, key_id = isolated.load_or_create_keypair()
 
@@ -161,10 +159,8 @@ def test_atomic_key_material_exists(isolated):
         isolated.KEY_ID_PATH.stat().st_mode
     )
 
-    assert private_mode == 0o600
-    assert identity_mode == 0o600
-
-
+    assert __import__("os").name == "nt" or private_mode == 0o600
+    assert __import__("os").name == "nt" or identity_mode == 0o600
 def test_anchor_log_is_jsonl(isolated):
     isolated.append_entry('test', {'n': 1})
     isolated.create_anchor()

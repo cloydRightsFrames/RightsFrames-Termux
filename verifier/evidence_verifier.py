@@ -37,21 +37,35 @@ def verify_ledger_file(path: Path) -> tuple[bool, str]:
     return verify_chain(records)
 
 
+
+
+
+
 def verify_proof_file(path: Path) -> tuple[bool, str]:
-    data = load_json(path)
-
-    proof = MerkleProof(
-        leaf_index=data['leaf_index'],
-        tree_size=data['tree_size'],
-        leaf_hash=data['leaf_hash'],
-        siblings=tuple(data['siblings']),
-    )
-
-    return (
-        verify_proof(proof, data['root_hash']),
-        'valid' if verify_proof(proof, data['root_hash']) else 'invalid_proof',
-    )
-
+    try:
+        data = load_json(path)
+        if not isinstance(data, dict):
+            return False, "invalid_json"
+        # Support both 'siblings' and 'audit_path'
+        siblings_key = "siblings" if "siblings" in data else "audit_path"
+        if siblings_key not in data:
+            return False, "missing_siblings"
+        if not isinstance(data[siblings_key], list):
+            return False, "invalid_siblings"
+        if "leaf_index" not in data:
+            return False, "missing_leaf_index"
+        
+        proof = MerkleProof(
+            leaf_index=data['leaf_index'],
+            tree_size=data['tree_size'],
+            leaf_hash=data['leaf_hash'],
+            siblings=tuple(data[siblings_key]),
+        )
+        if verify_proof(proof, data['root_hash']):
+            return True, "valid"
+        return False, "invalid_proof"
+    except Exception:
+        return False, "invalid_proof"
 
 def verify_signature_file(path: Path) -> tuple[bool, str]:
     data = load_json(path)
