@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import base64
+import binascii
+import hashlib
+import re
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
@@ -17,8 +20,27 @@ def _b64(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).rstrip(b'=').decode('ascii')
 
 
+_B64URL = re.compile(r'^[A-Za-z0-9_-]*$')
+
+
 def _unb64(value: str) -> bytes:
-    return base64.urlsafe_b64decode(value + '=' * (-len(value) % 4))
+    """Strict unpadded base64url: rejects foreign characters and non-canonical encodings."""
+    if not _B64URL.match(value) or len(value) % 4 == 1:
+        raise ValueError('signature is not canonical base64url')
+    try:
+        raw = base64.urlsafe_b64decode(value + '=' * (-len(value) % 4))
+    except binascii.Error:
+        raise ValueError('signature is not canonical base64url') from None
+    if _b64(raw) != value:
+        raise ValueError('signature is not canonical base64url')
+    return raw
+
+
+def key_id_for(public_key_bytes: bytes) -> str:
+    """Key identifier bound to the key material: 'ed25519:' + SHA-256(raw public key)."""
+    if len(public_key_bytes) != 32:
+        raise ValueError('invalid Ed25519 public key')
+    return 'ed25519:' + hashlib.sha256(public_key_bytes).hexdigest()
 
 
 def generate_keypair() -> tuple[bytes, bytes]:

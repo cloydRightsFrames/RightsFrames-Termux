@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import ipaddress
+import os
 import re
 import shutil
 import tempfile
@@ -29,8 +31,48 @@ FAIL_LIMIT = 10
 FAIL_WINDOW = 60.0
 _FAILURES: dict[str, list[float]] = {}
 _FAIL_LOCK = threading.Lock()
+FAIL_TRACKED_CLIENTS = 10000
 _KEY = re.compile(r'^[A-Za-z0-9._-]{8,128}$')
 _exporter_module: Any = None
+
+
+def _trusted_proxies() -> frozenset[str]:
+    """RF_TRUSTED_PROXIES: comma-separated proxy addresses (e.g. 127.0.0.1 for cloudflared).
+
+    Behind a tunnel or reverse proxy every request arrives from the proxy address, so without
+    this the failed-auth throttle would lock out all clients at once. Forwarded headers are
+    honoured ONLY when the TCP peer is a listed proxy; otherwise they are attacker-controlled.
+    """
+    proxies = set()
+    for item in os.environ.get('RF_TRUSTED_PROXIES', '').split(','):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            proxies.add(str(ipaddress.ip_address(item)))
+        except ValueError:
+            continue
+    return frozenset(proxies)
+
+
+def client_address(request: Request) -> str:
+    peer = request.client.host if request.client else 'unknown'
+    try:
+        peer = str(ipaddress.ip_address(peer))
+    except ValueError:
+        return peer
+    if peer not in _trusted_proxies():
+        return peer
+    candidates = [request.headers.get('cf-connecting-ip', '')]
+    forwarded = request.headers.get('x-forwarded-for', '')
+    if forwarded:
+        candidates.append(forwarded.split(',')[-1])
+    for candidate in candidates:
+        try:
+            return str(ipaddress.ip_address(candidate.strip()))
+        except ValueError:
+            continue
+    return peer
 
 
 def _throttle_check(host: str) -> None:
@@ -44,10 +86,28 @@ def _throttle_check(host: str) -> None:
 
 
 def _throttle_fail(host: str) -> None:
+    now = time.monotonic()
     with _FAIL_LOCK:
-        if len(_FAILURES) > 10000:
-            _FAILURES.clear()
-        _FAILURES.setdefault(host, []).append(time.monotonic())
+        if host not in _FAILURES and len(_FAILURES) >= FAIL_TRACKED_CLIENTS:
+            # Evict expired windows first, then the stalest clients. Never wipe every
+            # counter: that would let an attacker reset its own lockout by spraying addresses.
+            for key, stamps in list(_FAILURES.items()):
+                recent = [t for t in stamps if now - t < FAIL_WINDOW]
+                if recent:
+                    _FAILURES[key] = recent
+                else:
+                    del _FAILURES[key]
+            # Clients currently locked out are never evicted; among the rest, drop the ones
+            # with the fewest recent failures first.
+            evictable = sorted(
+                (k for k, v in _FAILURES.items() if len(v) < FAIL_LIMIT),
+                key=lambda k: (len(_FAILURES[k]), _FAILURES[k][-1]),
+            )
+            while len(_FAILURES) >= FAIL_TRACKED_CLIENTS and evictable:
+                del _FAILURES[evictable.pop(0)]
+            if len(_FAILURES) >= FAIL_TRACKED_CLIENTS:
+                return
+        _FAILURES.setdefault(host, []).append(now)
 
 
 def _extract(authorization: str | None, x_api_key: str | None) -> str:
@@ -62,7 +122,7 @@ def require(scope: str) -> Callable[..., dict[str, Any]]:
     def dependency(request: Request,
                    authorization: str | None = Header(default=None),
                    x_api_key: str | None = Header(default=None)) -> dict[str, Any]:
-        host = request.client.host if request.client else 'unknown'
+        host = client_address(request)
         _throttle_check(host)
         token = _extract(authorization, x_api_key)
         principal = rf_auth.authenticate(token) if token else None

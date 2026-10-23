@@ -15,3 +15,10 @@ Scopes: `entries:write`, `ledger:read`, `anchor:create`, `evidence:export`, `adm
 | GET/POST/DELETE | /v1/principals[/id] | admin:principals | token returned once; last admin cannot be revoked |
 
 Writes append `audit.api` (principal, action, payload digest) before acting. Reads are not ledger-audited.
+
+## Operations
+
+- First admin: `RF_DATA_DIR=... python tools/rf_principal.py create --id admin-1 --scopes admin:principals,... --token-file PATH` (token shown once; only its PBKDF2 hash is stored).
+- Behind cloudflared or a reverse proxy set `RF_TRUSTED_PROXIES=127.0.0.1` so the failed-auth throttle keys on `CF-Connecting-IP` / the last `X-Forwarded-For` hop instead of the proxy address. Forwarded headers from any other peer are ignored.
+- The legacy `POST /entries` and `POST /anchor` (shared `RF_API_KEY`) append an `audit.api` entry under principal `legacy-shared-api-key` before acting. Prefer v1 principal tokens.
+- `RF_PINNED_KEY_ID` makes `/health` and `/v1/ledger/verify` fail if anchors are signed by any other key.

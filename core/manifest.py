@@ -4,10 +4,12 @@ import hashlib
 import json
 from pathlib import Path
 
-from .merkle import compute_merkle_root
+from .merkle import compute_legacy_merkle_root, compute_merkle_root
 
 
-SCHEMA = "rightsframes.manifest.v1"
+SCHEMA = "rightsframes.manifest.v2"
+LEGACY_SCHEMA = "rightsframes.manifest.v1"
+SUPPORTED_SCHEMAS = (SCHEMA, LEGACY_SCHEMA)
 ALGORITHM = "Ed25519+SHA-256"
 
 
@@ -17,6 +19,7 @@ def canonical_json(value) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
 
 
@@ -84,7 +87,10 @@ def sign_manifest(manifest, private_key):
 
 
 def verify_manifest_signature(manifest, public_key):
-    if manifest.get("schema") != SCHEMA:
+    if not isinstance(manifest, dict):
+        return False
+
+    if manifest.get("schema") not in SUPPORTED_SCHEMAS:
         return False
 
     if manifest.get("algorithm") != ALGORITHM:
@@ -154,7 +160,7 @@ def verify_manifest(manifest, public_key, root=None):
         if not isinstance(expected_hash, str):
             return False
 
-        if not isinstance(expected_size, int):
+        if not isinstance(expected_size, int) or isinstance(expected_size, bool):
             return False
 
         if root_path is not None:
@@ -183,8 +189,14 @@ def verify_manifest(manifest, public_key, root=None):
         except ValueError:
             return False
 
-    calculated_root = compute_merkle_root(
-        calculated
-    ).hex()
+    if len({entry.get("path") for entry in files}) != len(files):
+        return False
+
+    root_function = (
+        compute_merkle_root
+        if manifest.get("schema") == SCHEMA
+        else compute_legacy_merkle_root
+    )
+    calculated_root = root_function(calculated).hex()
 
     return calculated_root == manifest.get("merkle_root")

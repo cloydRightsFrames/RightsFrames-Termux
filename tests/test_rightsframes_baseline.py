@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 import ast
 import subprocess
 import re
@@ -78,6 +79,9 @@ def test_python_sources_compile():
 
 def test_release_tags_exist():
     required = {'v0.1.0', 'v0.1.1', 'v0.1.2'}
+    shallow = run('git', 'rev-parse', '--is-shallow-repository')
+    if shallow.returncode == 0 and shallow.stdout.strip() == 'true':
+        pytest.skip('shallow clone: release tags are not fetched')
     result = run('git', 'tag', '--list')
     assert result.returncode == 0
     assert required.issubset(set(result.stdout.splitlines()))

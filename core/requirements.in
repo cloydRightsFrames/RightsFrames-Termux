@@ -1,0 +1,9 @@
+# Direct runtime dependencies. Regenerate the locked, hash-pinned core/requirements.txt with:
+#   uv pip compile core/requirements.in --generate-hashes --universal --python-version 3.11 --no-header --no-annotate -o core/requirements.txt
+cryptography==50.0.2
+fastapi==0.143.1
+pydantic==2.14.0
+starlette==1.8.0
+uvicorn==0.54.0
+# transitive, held at the audited version
+pycparser==3.11

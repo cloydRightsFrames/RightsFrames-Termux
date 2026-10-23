@@ -411,7 +411,7 @@ def test_verifier_file_wrappers(monkeypatch, tmp_path):
             {
                 "public_key": "00" * 32,
                 "payload": "00",
-                "signature": "00" * 64,
+                "signature": {"schema": "rf.signature.v1", "key_id": "k"},
             }
         ),
         encoding="utf-8",
@@ -423,11 +423,20 @@ def test_verifier_file_wrappers(monkeypatch, tmp_path):
     monkeypatch.setattr(v, "verify_chain", lambda records: (True, "valid"))
     assert v.verify_ledger_file(ledger) == (True, "valid")
 
+    # A root carried inside the proof file is attacker-chosen: without a pin it must fail.
     monkeypatch.setattr(v, "verify_proof", lambda proof, root: True)
-    assert v.verify_proof_file(proof) == (True, "valid")
+    assert v.verify_proof_file(proof) == (False, "untrusted_root")
+    pinned_root = v.TrustStore(roots=["00" * 32])
+    assert v.verify_proof_file(proof, pinned_root) == (
+        True,
+        "valid;leaf_hash_not_bound_to_record",
+    )
 
+    # A public key carried inside the signature file is attacker-chosen as well.
     monkeypatch.setattr(v, "verify_signature", lambda *args: (True, "valid"))
-    assert v.verify_signature_file(signature) == (True, "valid")
+    assert v.verify_signature_file(signature) == (False, "untrusted_key")
+    pinned_key = v.TrustStore(keys=["00" * 32])
+    assert v.verify_signature_file(signature, pinned_key) == (True, "valid")
 
 
 def test_verifier_main_all_targets(monkeypatch, tmp_path, capsys):
@@ -452,12 +461,12 @@ def test_verifier_main_all_targets(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         v,
         "verify_proof_file",
-        lambda path: (True, "valid"),
+        lambda path, trust=None: (True, "valid"),
     )
     monkeypatch.setattr(
         v,
         "verify_signature_file",
-        lambda path: (True, "valid"),
+        lambda path, trust=None: (True, "valid"),
     )
     monkeypatch.setattr(
         sys,
@@ -609,9 +618,13 @@ def test_evidence_envelope_normalization_paths():
             "b": (3, 2),
             "a": {"z": None, "y": False},
             "n": 1,
-            "f": 1.5,
         }
-    )
+    ) == b'{"a":{"y":false,"z":null},"b":[3,2],"n":1}'
+
+    # Floats, non-string keys and unsafe integers have no single canonical form.
+    for bad in ({"f": 1.5}, {1: "x"}, {"n": 2 ** 53}):
+        with pytest.raises(envelope.CanonicalizationError):
+            envelope.canonical_bytes(bad)
 
     try:
         envelope.canonical_bytes({"unsupported": object()})

@@ -4,6 +4,7 @@ ZIP with exactly four members: `manifest.json`, `ledger.jsonl`, `anchors.jsonl`,
 
 - `ledger.jsonl`: one canonical JSON object per line: `id, ts, entry_type, payload (string), prev_hash, entry_hash`.
   `entry_hash = SHA-256("{id}|{prev_hash}|{ts}|{entry_type}|{payload}")`, genesis `prev_hash` = 64 zeros.
+  New entries may not contain `|`, control characters or edge whitespace in `entry_type`; stored entries verify unchanged.
   `payload` is canonical JSON: sorted keys, separators `,` `:`, UTF-8 not ASCII-escaped, no NaN/Infinity.
 - `anchors.jsonl`: `rf.anchor.v2` objects. `anchor_hash = SHA-256(canonical JSON of core fields)`;
   Ed25519 signature over the ASCII anchor_hash. Legacy anchors (no `key_id`) hash `json.dumps(core, sort_keys=True)`.

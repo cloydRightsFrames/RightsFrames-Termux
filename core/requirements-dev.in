@@ -1,0 +1,4 @@
+# Test-only dependencies. Regenerate core/requirements-dev.txt with:
+#   uv pip compile core/requirements-dev.in --generate-hashes --universal --python-version 3.11 --no-header --no-annotate -c core/requirements.txt -o core/requirements-dev.txt
+pytest==9.1.1
+httpx==0.28.1

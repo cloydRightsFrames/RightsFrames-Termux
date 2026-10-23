@@ -8,6 +8,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 import tempfile
@@ -30,6 +31,13 @@ MAX_PAYLOAD_BYTES = 262144
 MAX_ANCHOR_BYTES = 10485760
 MAX_ANCHOR_CORE_BYTES = 65536
 MAX_ANCHOR_CHAIN_LENGTH = 1000000
+
+# entry_type is hashed inside a '|'-delimited record. '|' and control characters are refused
+# for NEW entries so field boundaries stay unambiguous; stored entries are verified unchanged.
+_FORBIDDEN_ENTRY_TYPE = re.compile(r'[|\x00-\x1f\x7f-\x9f]')
+
+# Optional out-of-band pin: when set, anchors must be signed by exactly this key id.
+PINNED_KEY_ID_ENV = 'RF_PINNED_KEY_ID'
 
 
 def _secure_directory() -> None:
@@ -160,6 +168,23 @@ def load_or_create_keypair() -> tuple[Ed25519PrivateKey, bytes, str]:
     return private, public, key_id
 
 
+def load_verification_key() -> tuple[Any, bytes, str]:
+    """Load the PUBLIC anchor key read-only. Never creates, rotates or touches key files.
+
+    Verification must not have side effects: generating a fresh keypair while verifying would
+    let an empty or wiped data directory look like a valid, newly initialised ledger.
+    """
+    if not PUBLIC_KEY_PATH.is_file():
+        raise FileNotFoundError('anchor public key is missing')
+    public = serialization.load_pem_public_key(PUBLIC_KEY_PATH.read_bytes())
+    if not hasattr(public, 'public_bytes'):
+        raise TypeError('stored public key is invalid')
+    raw = public.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    if len(raw) != 32:
+        raise TypeError('stored public key is not Ed25519')
+    return public, raw, _key_id(raw)
+
+
 def init_db() -> None:
     _secure_directory()
     conn = sqlite3.connect(DB_PATH)
@@ -225,6 +250,8 @@ def append_entry(entry_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError('entry_type must be a non-empty string')
     if len(entry_type) > MAX_ENTRY_TYPE:
         raise ValueError('entry_type exceeds maximum length')
+    if _FORBIDDEN_ENTRY_TYPE.search(entry_type) or entry_type != entry_type.strip():
+        raise ValueError('entry_type contains a delimiter, control character or edge whitespace')
 
     payload_text = _payload_bytes(payload).decode('utf-8')
 
@@ -480,15 +507,24 @@ def create_anchor() -> dict[str, Any]:
         return anchor
 
 
-def verify_anchors() -> tuple[bool, str]:
+def verify_anchors(pinned_key_id: str | None = None) -> tuple[bool, str]:
+    if pinned_key_id is None:
+        pinned_key_id = os.environ.get(PINNED_KEY_ID_ENV, '').strip() or None
     try:
-        _, public, current_key_id = load_or_create_keypair()
         anchors = _read_anchors()
     except Exception:
         return False, 'anchor verification initialization failed'
 
     if not anchors:
         return True, 'no anchors'
+
+    try:
+        public_key, _, current_key_id = load_verification_key()
+    except Exception:
+        return False, 'anchor verification initialization failed'
+
+    if pinned_key_id is not None and pinned_key_id != current_key_id:
+        return False, 'anchor key does not match pinned key id'
 
     previous_anchor_hash = '0' * 64
     previous_ledger_count = 0
@@ -553,9 +589,6 @@ def verify_anchors() -> tuple[bool, str]:
             return False, f'anchor hash mismatch at {index}'
 
         try:
-            public_key = serialization.load_pem_public_key(
-                PUBLIC_KEY_PATH.read_bytes()
-            )
             public_key.verify(signature, anchor_hash.encode('ascii'))
         except Exception:
             return False, f'anchor signature invalid at {index}'

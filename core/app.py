@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import os
 from typing import Any
@@ -15,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from core.rf_core import (
     MAX_ENTRY_TYPE,
     MAX_PAYLOAD_BYTES,
+    _canonical_json,
     append_entry,
     create_anchor,
     health,
@@ -22,6 +24,9 @@ from core.rf_core import (
 
 MAX_REQUEST_BYTES = 393216
 API_KEY = os.environ.get('RF_API_KEY', '').strip()
+# The shared RF_API_KEY carries no per-principal identity; its writes are audited under this
+# name so they remain distinguishable from v1 principal tokens in the ledger.
+LEGACY_PRINCIPAL = 'legacy-shared-api-key'
 
 app = FastAPI(
     title='RightsFrames Core',
@@ -148,6 +153,14 @@ def create_entry(
     _require_api_key(authorization, x_api_key)
 
     try:
+        append_entry('audit.api', {
+            'principal': LEGACY_PRINCIPAL,
+            'action': 'entries.append',
+            'entry_type': body.entry_type,
+            'payload_sha256': hashlib.sha256(
+                _canonical_json(body.payload).encode('utf-8')
+            ).hexdigest(),
+        })
         return append_entry(
             body.entry_type,
             body.payload,
@@ -167,11 +180,15 @@ def anchor(
     _require_api_key(authorization, x_api_key)
 
     try:
+        append_entry('audit.api', {
+            'principal': LEGACY_PRINCIPAL,
+            'action': 'anchor.create',
+        })
         return create_anchor()
     except ValueError as exc:
         raise HTTPException(
             status_code=409,
-            detail='bad entry',
+            detail='anchor creation refused: ledger verification failed',
         ) from exc
 
 # --- API v1: per-principal credentials, scopes, audited operations ---

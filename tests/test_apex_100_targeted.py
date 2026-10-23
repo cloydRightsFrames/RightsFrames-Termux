@@ -11,6 +11,13 @@ from enterprise.control_plane import cli
 from enterprise.control_plane.audit import AuditLog
 
 
+class _AcceptAllKey:
+    """Stand-in verification key for tests that exercise non-signature anchor paths."""
+
+    def verify(self, signature, message):
+        return None
+
+
 def test_rf_core_verify_anchors_allows_longer_current_ledger():
     anchor = {
         "schema": "rightsframes.anchor.v1",
@@ -40,8 +47,8 @@ def test_rf_core_verify_anchors_allows_longer_current_ledger():
 
     with patch.object(
         rf_core,
-        "load_or_create_keypair",
-        return_value=(None, object(), "unused"),
+        "load_verification_key",
+        return_value=(_AcceptAllKey(), b"", "unused"),
     ), patch.object(
         rf_core,
         "_read_anchors",
@@ -175,10 +182,12 @@ def test_envelope_verify_rejects_wrong_schema():
     assert verify_envelope({"schema": "wrong"}) == (False, "schema")
 
 
-def test_merkle_levels_empty():
-    from core.evidence.merkle import _levels
+def test_merkle_empty_tree_root_is_rfc9162_empty_hash():
+    import hashlib
 
-    assert _levels([]) == [[]]
+    from core.evidence.merkle import merkle_root
+
+    assert merkle_root([]) == hashlib.sha256(b"").hexdigest()
 
 
 def test_merkle_verify_proof_rejects_invalid_tree_size():
@@ -269,8 +278,8 @@ def test_rf_core_verify_anchors_rejects_malformed_anchor():
 
     with patch.object(
         rf_core,
-        "load_or_create_keypair",
-        return_value=(None, object(), "unused"),
+        "load_verification_key",
+        return_value=(_AcceptAllKey(), b"", "unused"),
     ), patch.object(
         rf_core,
         "_read_anchors",
@@ -296,8 +305,8 @@ def test_rf_core_verify_anchors_rejects_sequence_mismatch():
 
     with patch.object(
         rf_core,
-        "load_or_create_keypair",
-        return_value=(None, object(), "unused"),
+        "load_verification_key",
+        return_value=(_AcceptAllKey(), b"", "unused"),
     ), patch.object(
         rf_core,
         "_read_anchors",
@@ -323,8 +332,8 @@ def test_rf_core_verify_anchors_rejects_broken_chain():
 
     with patch.object(
         rf_core,
-        "load_or_create_keypair",
-        return_value=(None, object(), "unused"),
+        "load_verification_key",
+        return_value=(_AcceptAllKey(), b"", "unused"),
     ), patch.object(
         rf_core,
         "_read_anchors",
@@ -364,8 +373,8 @@ def test_rf_core_verify_anchors_rejects_ledger_count_regression():
 
     with patch.object(
         rf_core,
-        "load_or_create_keypair",
-        return_value=(None, object(), "unused"),
+        "load_verification_key",
+        return_value=(_AcceptAllKey(), b"", "unused"),
     ), patch.object(
         rf_core,
         "_read_anchors",
@@ -660,7 +669,11 @@ def test_cli_main_unsupported_returns_two_when_parser_error_returns():
 def test_rf_core_verify_anchors_load_failure():
     with patch.object(
         rf_core,
-        "load_or_create_keypair",
+        "_read_anchors",
+        return_value=[{"seq": 1}],
+    ), patch.object(
+        rf_core,
+        "load_verification_key",
         side_effect=RuntimeError("key load failed"),
     ):
         assert rf_core.verify_anchors() == (
@@ -697,7 +710,10 @@ def test_verifier_proof_file_uses_audit_path(tmp_path):
     )
 
     with patch.object(verifier, "verify_proof", return_value=True):
-        assert verifier.verify_proof_file(proof) == (True, "valid")
+        assert verifier.verify_proof_file(proof) == (False, "untrusted_root")
+        assert verifier.verify_proof_file(
+            proof, verifier.TrustStore(roots=["a" * 64])
+        ) == (True, "valid;leaf_hash_not_bound_to_record")
 
 
 def test_verifier_proof_file_missing_siblings(tmp_path):
@@ -738,7 +754,9 @@ def test_verifier_proof_file_invalid_proof(tmp_path):
         encoding="utf-8",
     )
 
-    assert verifier.verify_proof_file(proof) == (
+    assert verifier.verify_proof_file(
+        proof, verifier.TrustStore(roots=["a" * 64])
+    ) == (
         False,
         "invalid_proof",
     )

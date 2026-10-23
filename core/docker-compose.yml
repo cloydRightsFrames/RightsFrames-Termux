@@ -1,9 +1,30 @@
+# Run from the repository root:
+#   RF_API_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+#     docker compose -f core/docker-compose.yml up --build
+# The port is bound to loopback only; publish it through a reverse proxy or tunnel.
 services:
   rightsframes-core:
-    build: .
+    build:
+      context: ..
+      dockerfile: core/Dockerfile
+    image: rightsframes-core:local
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    environment:
+      RF_API_KEY: ${RF_API_KEY:-}
+      RF_ALLOWED_HOSTS: ${RF_ALLOWED_HOSTS:-127.0.0.1,localhost}
+      RF_TRUSTED_PROXIES: ${RF_TRUSTED_PROXIES:-}
+      RF_PINNED_KEY_ID: ${RF_PINNED_KEY_ID:-}
     volumes:
       - rf_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    restart: unless-stopped
 volumes:
   rf_data:
