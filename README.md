@@ -29,6 +29,20 @@ The full production deployment (IDS, threat-intel feeds, automated backup
 verification, self-healing process supervision) runs as a personal
 Android/Termux stack and is not included here.
 
+## Termux Node: Self-Healing Installer
+
+`termux/rf-pinnacle.sh` hardens the Android/Termux node in one idempotent run:
+waits out PostgreSQL crash recovery (and clears a provably stale
+`postmaster.pid`), installs the `rf-watchdog` and `rf-wifi-watch` runit
+services, supervises Threat Intel / Aletheia with crash-loop backoff, and
+diagnoses whole-stack restarts (Android phantom-process killer, memory
+pressure). Every change is backed up; `--dry-run` shows them first.
+
+    cd ~/RightsFrames-Termux && git pull
+    bash termux/rf-pinnacle.sh --dry-run   # preview
+    bash termux/rf-pinnacle.sh             # apply
+    bash termux/rf-pinnacle.sh status      # live watchdog view
+
 ## Honest Limitations
 
 This proves the ledger's integrity, not the security of whatever system
