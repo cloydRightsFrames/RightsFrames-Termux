@@ -3,7 +3,7 @@ updates:
 - package-ecosystem: pip
   cooldown:
     default-days: 7
-  directory: /
+  directory: /core
   schedule:
     interval: daily
     time: 03:15
@@ -21,7 +21,7 @@ updates:
 - package-ecosystem: docker
   cooldown:
     default-days: 7
-  directory: /
+  directory: /core
   schedule:
     interval: daily
     time: 03:30

@@ -1,0 +1,12 @@
+# Direct runtime dependencies. requirements.txt is generated from this file:
+#
+#   uv pip compile core/requirements.in --universal --generate-hashes \
+#     --python-version 3.12 -o core/requirements.txt
+#
+# --universal keeps hashes for every platform's wheels (Linux, Windows, macOS,
+# Android/Termux builds from source), so --require-hashes installs work anywhere.
+cryptography
+fastapi
+pydantic
+starlette
+uvicorn
