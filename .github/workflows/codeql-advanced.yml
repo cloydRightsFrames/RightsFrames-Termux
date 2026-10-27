@@ -52,8 +52,15 @@ jobs:
       - name: Dependency Check (digest-pinned scanner image)
         env:
           PROJECT: ${{ github.repository }}
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
           mkdir -p reports
+          NVD_ARGS=()
+          if [ -n "$NVD_API_KEY" ]; then
+            NVD_ARGS=(--nvdApiKey "$NVD_API_KEY")
+          else
+            echo "::warning::NVD_API_KEY not configured; NVD updates may be rate-limited"
+          fi
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/github/workspace" \
             -w /github/workspace \
@@ -64,7 +71,7 @@ jobs:
             --out /github/workspace/reports \
             --enableExperimental \
             --enableRetired \
-            --noupdate
+            "${NVD_ARGS[@]}"
       - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee
         if: always() && hashFiles('reports/dependency-check-report.sarif') != ''
         with:
