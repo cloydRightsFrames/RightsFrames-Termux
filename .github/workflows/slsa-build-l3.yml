@@ -69,7 +69,7 @@ jobs:
             "${GITHUB_SHA}" \
             > "dist/$TAR"
           gzip -n "dist/$TAR"
-          sha256sum "dist/$ART" > dist/SHA256SUMS
+          (cd dist && sha256sum "$ART" > SHA256SUMS)
           git rev-parse HEAD > dist/SOURCE_COMMIT
           git rev-parse HEAD^{tree} > dist/SOURCE_TREE
 
@@ -86,7 +86,7 @@ jobs:
       - name: Generate SLSA provenance attestation
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
         with:
-          subject-path: ${{ inputs.artifact_name }}
+          subject-path: dist/${{ inputs.artifact_name }}
           show-summary: true
 
       - name: Upload L3 release bundle

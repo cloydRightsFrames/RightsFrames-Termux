@@ -87,7 +87,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check -r core/requirements.txt
+          python -m pip install --disable-pip-version-check --require-hashes -r core/requirements.txt
 
       - name: Compile source
         shell: bash
@@ -381,7 +381,7 @@ jobs:
 
           with open("dist/release-manifest.json", "w", encoding="utf-8") as f:
               json.dump(m, f, indent=2, sort_keys=True)
-              f.write("\\n")
+              f.write("\n")
           PY
 
           python3 -m json.tool dist/release-manifest.json >/dev/null
@@ -400,6 +400,7 @@ jobs:
       - provenance
       - reproducibility
       - slsa3-build
+      - release-policy
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -479,11 +480,11 @@ jobs:
           set -euo pipefail
           ART="dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
           ATTEST_DIR="$(mktemp -d)"
-          gh attestation download "$ART" \
+          (cd "$ATTEST_DIR" && gh attestation download "$GITHUB_WORKSPACE/$ART" \
             --repo "${GITHUB_REPOSITORY}" \
             --predicate-type 'https://slsa.dev/provenance/v1' \
-            --limit 30 \
-            --dir "$ATTEST_DIR"
+            --limit 30
+          )
           ATTEST_BUNDLE="$(find "$ATTEST_DIR" -maxdepth 1 -type f -name 'sha256:*' -print -quit)"
           test -s "$ATTEST_BUNDLE"
           TRUSTED_ROOT="$ATTEST_DIR/trusted_root.jsonl"
@@ -544,7 +545,6 @@ jobs:
       - reproducibility
       - slsa3-build
       - provenance
-      - release
       - zero-trust-policy
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -560,7 +560,7 @@ jobs:
           test "${{ needs.reproducibility.result }}" = success
           test "${{ needs.slsa3-build.result }}" = success
           test "${{ needs.provenance.result }}" = success
-          test "${{ needs.release.result }}" = success
+          test "${{ needs.zero-trust-policy.result }}" = success
           test "${GITHUB_REF_TYPE}" = tag
 
           case "${GITHUB_REF_NAME}" in
@@ -580,6 +580,6 @@ jobs:
             'REPRODUCIBILITY=VERIFIED' \
             'SLSA_ATTESTATION=VERIFIED_BY_WORKFLOW' \
             'RELEASE_MANIFEST=VERIFIED' \
-            'RELEASE_PUBLICATION=VERIFIED' \
+            'RELEASE_PUBLICATION=AUTHORIZED' \
             "COMMIT=${GITHUB_SHA}" \
             "TAG=${GITHUB_REF_NAME}"

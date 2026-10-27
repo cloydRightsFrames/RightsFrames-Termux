@@ -80,7 +80,8 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=f'.{path.name}.', dir=DATA_DIR)
     tmp_path = Path(tmp_name)
     try:
-        os.fchmod(fd, mode)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
         with os.fdopen(fd, 'wb') as handle:
             handle.write(data)
             handle.flush()
