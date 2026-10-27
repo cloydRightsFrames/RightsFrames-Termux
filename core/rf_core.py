@@ -35,7 +35,8 @@ MAX_ANCHOR_CHAIN_LENGTH = 1000000
 def _secure_directory() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        os.chmod(DATA_DIR, 0o700)
+        # Reviewed false positive: 0700 grants owner-only directory access and traversal; 0644 would be unsafe.
+        os.chmod(DATA_DIR, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
     except OSError:
         pass
 
