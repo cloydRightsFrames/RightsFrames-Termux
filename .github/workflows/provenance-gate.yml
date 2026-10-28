@@ -527,7 +527,10 @@ jobs:
             exit 1
           fi
 
+          TAG_TYPE="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${GITHUB_REF_NAME}" --jq .object.type)"
+          test "$TAG_TYPE" = tag || { echo ANNOTATED_TAG_REQUIRED; exit 1; }
           gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
             --repo "${GITHUB_REPOSITORY}" \
             --title "RightsFrames ${GITHUB_REF_NAME}" \
             --generate-notes \
