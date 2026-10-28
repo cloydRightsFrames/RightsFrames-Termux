@@ -71,6 +71,7 @@ jobs:
             --out /github/workspace/reports \
             --enableExperimental \
             --enableRetired \
+            --failOnCVSS 7 \
             "${NVD_ARGS[@]}"
       - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee
         if: always() && hashFiles('reports/dependency-check-report.sarif') != ''
@@ -92,6 +93,7 @@ jobs:
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "CRITICAL,HIGH,MEDIUM"
+          exit-code: "1"
       - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee
         if: always() && hashFiles('trivy-results.sarif') != ''
         with:
@@ -114,6 +116,7 @@ jobs:
           --config p/owasp-top-ten
           --config p/security-audit
           --config p/ci
+          --error
           --sarif
           --output semgrep.sarif
       - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee

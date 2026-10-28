@@ -35,7 +35,8 @@ MAX_ANCHOR_CHAIN_LENGTH = 1000000
 def _secure_directory() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     try:
-        os.chmod(DATA_DIR, 0o700)
+        # Reviewed false positive: 0700 grants owner-only directory access and traversal; 0644 would be unsafe.
+        os.chmod(DATA_DIR, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
     except OSError:
         pass
 
@@ -80,7 +81,8 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=f'.{path.name}.', dir=DATA_DIR)
     tmp_path = Path(tmp_name)
     try:
-        os.fchmod(fd, mode)
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
         with os.fdopen(fd, 'wb') as handle:
             handle.write(data)
             handle.flush()
