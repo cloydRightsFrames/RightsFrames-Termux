@@ -381,6 +381,7 @@ def test_rf_anchor_log_size_limit(tmp_path, monkeypatch):
 
 def test_rf_create_and_verify_anchors(tmp_path, monkeypatch):
     isolate_rf(tmp_path, monkeypatch)
+    monkeypatch.setenv('RF_PQ_SIGNING', 'off')  # exercises the v2 anchor path
 
     anchor1 = rf.create_anchor()
     assert anchor1['schema'] == 'rf.anchor.v2'
@@ -442,6 +443,7 @@ def test_rf_verify_anchor_tamper_matrix(
 
 def test_rf_legacy_anchor_verification(tmp_path, monkeypatch):
     isolate_rf(tmp_path, monkeypatch)
+    monkeypatch.setenv('RF_PQ_SIGNING', 'off')  # legacy conversion starts from a v2 anchor
     rf.create_anchor()
 
     anchor = json.loads(

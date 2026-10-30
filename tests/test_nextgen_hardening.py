@@ -79,7 +79,8 @@ def test_key_identity_matches_public_key(isolated):
     assert stored_id == key_id
 
 
-def test_anchor_round_trip(isolated):
+def test_anchor_round_trip(isolated, monkeypatch):
+    monkeypatch.setenv('RF_PQ_SIGNING', 'off')  # exercises the v2 anchor path
     isolated.append_entry('test', {'n': 1})
     anchor = isolated.create_anchor()
 

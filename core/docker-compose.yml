@@ -1,8 +1,13 @@
 services:
   rightsframes-core:
-    build: .
+    build:
+      context: ..
+      dockerfile: core/Dockerfile
+    environment:
+      RF_API_KEY: ${RF_API_KEY:-}
+      RF_ALLOWED_HOSTS: ${RF_ALLOWED_HOSTS:-127.0.0.1,localhost}
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - rf_data:/data
 volumes:
