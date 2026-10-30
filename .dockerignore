@@ -1,0 +1,7 @@
+# Allowlist: the image needs only the API package and the evidence exporter.
+*
+!core/
+!tools/rf_export_evidence.py
+core/**/__pycache__
+core/**/*.py[cod]
+core/requirements-test.*

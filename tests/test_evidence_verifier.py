@@ -287,7 +287,7 @@ def test_legacy_anchor_supported(world):
 
 def test_exporter_is_public_only_and_refuses_overwrite(world):
     m = _members(world.bundle)
-    assert set(m) == set(verifier.MEMBERS)
+    assert set(m) in (set(verifier.MEMBERS), set(verifier.MEMBERS_V2))
     assert all(b'PRIVATE KEY' not in b for b in m.values())
     with pytest.raises(FileExistsError):
         exporter.export_bundle(world.dir, world.bundle)

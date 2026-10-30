@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Read-only exporter: ledger.db + anchors.jsonl + PUBLIC key -> rf.evidence.v1 bundle.
+"""Read-only exporter: ledger.db + anchors.jsonl + PUBLIC key(s) -> evidence bundle.
 
-Never reads the private key. Refuses to overwrite an existing output file. Entries are
+Writes rf.evidence.v1, or rf.evidence.v2 when the data directory holds an ML-DSA-65
+post-quantum public key (signing_key_mldsa65.pub.pem); v2 adds that key as a fifth
+member and its pq_key_id to the manifest. Never reads a private key. Refuses to overwrite an existing output file. Entries are
 exported exactly as stored (forensic export); judging them is the verifier's job.
 Anchors are read BEFORE the ledger snapshot, so every exported anchor refers to a ledger
 prefix present in the snapshot (the ledger only grows).
@@ -23,7 +25,22 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 BUNDLE_SCHEMA = 'rf.evidence.v1'
+BUNDLE_SCHEMA_V2 = 'rf.evidence.v2'
+PQ_PUBLIC_KEY_NAME = 'signing_key_mldsa65.pub.pem'
 ZERO_HASH = '0' * 64
+
+
+def _pq_key_id(pem: bytes) -> str:
+    try:
+        from cryptography.hazmat.primitives.asymmetric.mldsa import MLDSA65PublicKey
+    except ImportError as exc:
+        raise RuntimeError('post-quantum key present but this cryptography build '
+                           'lacks ML-DSA; upgrade cryptography to export it') from exc
+    key = serialization.load_pem_public_key(pem)
+    if not isinstance(key, MLDSA65PublicKey):
+        raise TypeError('post-quantum public key is not ML-DSA-65')
+    raw = key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return 'mldsa65:' + _sha(raw)
 
 
 def _canonical(value: Any) -> str:
@@ -50,6 +67,9 @@ def export_bundle(data_dir: str | os.PathLike, out_path: str | os.PathLike) -> d
         raise TypeError('public key is not Ed25519')
     key_id = 'ed25519:' + _sha(public_key.public_bytes(serialization.Encoding.Raw,
                                                         serialization.PublicFormat.Raw))
+    pq_path = data / PQ_PUBLIC_KEY_NAME
+    pq_pem = pq_path.read_bytes() if pq_path.is_file() else None
+    pq_key_id = _pq_key_id(pq_pem) if pq_pem is not None else None
 
     anchor_bytes = b''
     anchor_count = 0
@@ -75,8 +95,10 @@ def export_bundle(data_dir: str | os.PathLike, out_path: str | os.PathLike) -> d
 
     members = {'ledger.jsonl': ledger_bytes, 'anchors.jsonl': anchor_bytes,
                'signing_key.pub.pem': pub_pem}
+    if pq_pem is not None:
+        members[PQ_PUBLIC_KEY_NAME] = pq_pem
     manifest = {
-        'schema': BUNDLE_SCHEMA,
+        'schema': BUNDLE_SCHEMA_V2 if pq_pem is not None else BUNDLE_SCHEMA,
         'created_at': dt.datetime.now(dt.timezone.utc).isoformat(timespec='microseconds').replace('+00:00', 'Z'),
         'files': {name: {'sha256': _sha(blob), 'bytes': len(blob)} for name, blob in members.items()},
         'ledger_count': len(rows),
@@ -84,6 +106,8 @@ def export_bundle(data_dir: str | os.PathLike, out_path: str | os.PathLike) -> d
         'anchor_count': anchor_count,
         'key_id': key_id,
     }
+    if pq_key_id is not None:
+        manifest['pq_key_id'] = pq_key_id
     members = {'manifest.json': _canonical(manifest).encode('utf-8'), **members}
 
     try:
@@ -114,6 +138,8 @@ def main() -> int:
     manifest = export_bundle(args.data_dir, args.out)
     print(f"exported {manifest['ledger_count']} entries, {manifest['anchor_count']} anchors, "
           f"key {manifest['key_id']}")
+    if 'pq_key_id' in manifest:
+        print(f"post-quantum key: {manifest['pq_key_id']} ({manifest['schema']})")
     print(f"ledger_head: {manifest['ledger_head']}")
     return 0
 
