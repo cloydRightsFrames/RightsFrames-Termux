@@ -44,40 +44,44 @@ jobs:
   dependency-check:
     name: "OWASP Dependency Check"
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     permissions:
       contents: read
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Dependency Check (digest-pinned scanner image)
-        env:
-          PROJECT: ${{ github.repository }}
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: |
-          mkdir -p reports
-          NVD_ARGS=()
-          if [ -n "$NVD_API_KEY" ]; then
-            NVD_ARGS=(--nvdApiKey "$NVD_API_KEY")
-          else
-            echo "::warning::NVD_API_KEY not configured; NVD updates may be rate-limited"
-          fi
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/github/workspace" \
-            -w /github/workspace \
-            owasp/dependency-check-action@sha256:01d78e8e60df25d1a6d42c85af2d8ce9d64a6fb69e18c6f98736dc1a7919009c \
-            --project "$PROJECT" \
-            --scan . \
-            --format SARIF \
-            --out /github/workspace/reports \
-            --enableExperimental \
-            --enableRetired \
-            --failOnCVSS 7 \
-            "${NVD_ARGS[@]}"
-      - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee
-        if: always() && hashFiles('reports/dependency-check-report.sarif') != ''
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          sarif_file: "reports/dependency-check-report.sarif"
-          category: "dependency-check"
+          python-version: '3.12'
+      - name: Prepare complete runtime and test dependency scan
+        id: prepare
+        run: python tools/rf_owasp_evidence.py prepare
+      - name: Refresh NVD and scan with the pinned image
+        id: scan
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          OSS_INDEX_TOKEN: ${{ secrets.OSS_INDEX_TOKEN }}
+          OSS_INDEX_USERNAME: ${{ secrets.OSS_INDEX_USERNAME }}
+        run: python tools/rf_owasp_evidence.py scan
+      - name: Verify NVD freshness, dependency coverage and SARIF locations
+        id: evidence
+        if: always() && steps.prepare.outcome == 'success'
+        env:
+          OSS_INDEX_TOKEN: ${{ secrets.OSS_INDEX_TOKEN }}
+        run: python tools/rf_owasp_evidence.py check
+      - uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee
+        if: always() && steps.evidence.outcome == 'success'
+        with:
+          sarif_file: reports/owasp/dependency-check-upload.sarif
+          category: dependency-check
+      - name: Retain original reports and freshness evidence
+        if: always() && hashFiles('reports/owasp/**') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: owasp-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/owasp/
+          retention-days: 30
+          if-no-files-found: error
   trivy-scan:
     name: "Trivy Container & IaC Scan"
     runs-on: ubuntu-latest
