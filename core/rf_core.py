@@ -27,9 +27,28 @@ LOCK_PATH = DATA_DIR / 'anchors.lock'
 
 MAX_ENTRY_TYPE = 128
 MAX_PAYLOAD_BYTES = 262144
-MAX_ANCHOR_BYTES = 10485760
+# Hybrid (Ed25519 + ML-DSA-65) anchors are ~4.9 KB per line, so the log cap
+# matches the verifier's 256 MiB member limit (~54,000 hybrid anchors).
+MAX_ANCHOR_BYTES = 268435456
 MAX_ANCHOR_CORE_BYTES = 65536
 MAX_ANCHOR_CHAIN_LENGTH = 1000000
+
+ANCHOR_SCHEMA_V2 = 'rf.anchor.v2'
+ANCHOR_SCHEMA_V3 = 'rf.anchor.v3'
+ANCHOR_CORE_LEGACY = ('schema', 'seq', 'created_at', 'ledger_count', 'ledger_head',
+                      'prev_anchor_hash')
+ANCHOR_CORE_V2 = ANCHOR_CORE_LEGACY + ('key_id',)
+ANCHOR_CORE_V3 = ANCHOR_CORE_V2 + ('pq_key_id',)
+
+# Post-quantum co-signature: ML-DSA-65 (NIST FIPS 204), domain-separated by
+# context string. v3 anchors are valid only if BOTH signatures verify, so an
+# anchor stays unforgeable while either Ed25519 or ML-DSA-65 remains unbroken.
+PQ_ALGORITHM = 'ML-DSA-65'
+PQ_KEY_PREFIX = 'mldsa65:'
+PQ_SIGNATURE_CONTEXT = b'rf.anchor.v3'
+PQ_MODES = ('auto', 'on', 'off')
+PQ_PRIVATE_KEY_NAME = 'signing_key_mldsa65.pem'
+PQ_PUBLIC_KEY_NAME = 'signing_key_mldsa65.pub.pem'
 
 
 def _secure_directory() -> None:
@@ -160,6 +179,102 @@ def load_or_create_keypair() -> tuple[Ed25519PrivateKey, bytes, str]:
         _write_text_atomic(KEY_ID_PATH, key_id + '\n', 0o600)
 
     return private, public, key_id
+
+
+_PQ_PROBE: dict[str, Any] = {}
+
+
+def _pq_module() -> Any:
+    """Return the ML-DSA module when this cryptography build supports it, else None."""
+    if 'module' not in _PQ_PROBE:
+        try:
+            from cryptography.hazmat.primitives.asymmetric import mldsa
+            mldsa.MLDSA65PrivateKey.generate()
+            _PQ_PROBE['module'] = mldsa
+        except Exception:
+            _PQ_PROBE['module'] = None
+    return _PQ_PROBE['module']
+
+
+def pq_available() -> bool:
+    return _pq_module() is not None
+
+
+def pq_mode() -> str:
+    mode = os.environ.get('RF_PQ_SIGNING', 'auto').strip().lower() or 'auto'
+    if mode not in PQ_MODES:
+        raise ValueError(f'RF_PQ_SIGNING must be one of {", ".join(PQ_MODES)}')
+    return mode
+
+
+def pq_private_key_path() -> Path:
+    return DATA_DIR / PQ_PRIVATE_KEY_NAME
+
+
+def pq_public_key_path() -> Path:
+    return DATA_DIR / PQ_PUBLIC_KEY_NAME
+
+
+def _pq_key_id(public_raw: bytes) -> str:
+    return PQ_KEY_PREFIX + _sha256(public_raw)
+
+
+def _pq_raw(public_key: Any) -> bytes:
+    return public_key.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+
+
+def load_pq_public_key() -> tuple[Any, str] | None:
+    """Return (ML-DSA-65 public key, pq_key_id), or None when no PQ key exists."""
+    path = pq_public_key_path()
+    if not path.exists():
+        return None
+    mldsa = _pq_module()
+    if mldsa is None:
+        raise RuntimeError('post-quantum key present but this cryptography build lacks ML-DSA')
+    key = serialization.load_pem_public_key(path.read_bytes())
+    if not isinstance(key, mldsa.MLDSA65PublicKey):
+        raise TypeError('post-quantum public key is not ML-DSA-65')
+    return key, _pq_key_id(_pq_raw(key))
+
+
+def load_or_create_pq_keypair() -> tuple[Any, str]:
+    """Load or create the ML-DSA-65 co-signing key; returns (private key, pq_key_id)."""
+    mldsa = _pq_module()
+    if mldsa is None:
+        raise RuntimeError('ML-DSA-65 is unavailable in this cryptography build')
+    _secure_directory()
+    private_path, public_path = pq_private_key_path(), pq_public_key_path()
+
+    if private_path.exists():
+        private = serialization.load_pem_private_key(private_path.read_bytes(), password=None)
+        if not isinstance(private, mldsa.MLDSA65PrivateKey):
+            raise TypeError('post-quantum signing key is not ML-DSA-65')
+    else:
+        if public_path.exists():
+            raise ValueError('post-quantum public key exists without its private key; '
+                             'refusing to rotate silently')
+        private = mldsa.MLDSA65PrivateKey.generate()
+        pem = private.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        _atomic_write(private_path, pem, 0o600)
+
+    public_raw = _pq_raw(private.public_key())
+    if public_path.exists():
+        stored = serialization.load_pem_public_key(public_path.read_bytes())
+        if (not isinstance(stored, mldsa.MLDSA65PublicKey)
+                or not secrets.compare_digest(_pq_raw(stored), public_raw)):
+            raise ValueError('post-quantum public key does not match private key')
+    else:
+        public_pem = private.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        _atomic_write(public_path, public_pem, 0o600)
+
+    return private, _pq_key_id(public_raw)
 
 
 def init_db() -> None:
@@ -430,6 +545,23 @@ def _append_anchor_line(anchor: dict[str, Any]) -> None:
             os.close(dir_fd)
 
 
+def _select_pq_signer(anchors: list[dict[str, Any]]) -> tuple[Any, str] | None:
+    """Decide whether the next anchor is hybrid; refuse any post-quantum downgrade."""
+    mode = pq_mode()
+    already_pq = any(item.get('schema') == ANCHOR_SCHEMA_V3 for item in anchors)
+    if mode == 'off':
+        if already_pq:
+            raise ValueError('ledger already has post-quantum anchors; '
+                             'RF_PQ_SIGNING=off would downgrade it')
+        return None
+    if mode == 'auto' and not already_pq and not pq_available():
+        return None
+    try:
+        return load_or_create_pq_keypair()
+    except (RuntimeError, TypeError) as exc:
+        raise ValueError(f'post-quantum anchor signing unavailable: {exc}') from exc
+
+
 def create_anchor() -> dict[str, Any]:
     private, public, key_id = load_or_create_keypair()
     init_db()
@@ -449,6 +581,7 @@ def create_anchor() -> dict[str, Any]:
             conn.close()
 
         anchors = _read_anchors()
+        pq_signer = _select_pq_signer(anchors)
         previous_anchor_hash = (
             anchors[-1]['anchor_hash'] if anchors else '0' * 64
         )
@@ -459,7 +592,7 @@ def create_anchor() -> dict[str, Any]:
         sequence = len(anchors) + 1
 
         core = {
-            'schema': 'rf.anchor.v2',
+            'schema': ANCHOR_SCHEMA_V2,
             'seq': sequence,
             'created_at': _utc_now(),
             'ledger_count': last_id,
@@ -467,15 +600,22 @@ def create_anchor() -> dict[str, Any]:
             'prev_anchor_hash': previous_anchor_hash,
             'key_id': key_id,
         }
+        if pq_signer is not None:
+            core['schema'] = ANCHOR_SCHEMA_V3
+            core['pq_key_id'] = pq_signer[1]
 
         anchor_hash = _canonical_anchor_hash(core)
-        signature = private.sign(anchor_hash.encode('ascii'))
+        signed = anchor_hash.encode('ascii')
+        signature = private.sign(signed)
 
         anchor = {
             **core,
             'anchor_hash': anchor_hash,
             'signature': base64.b64encode(signature).decode('ascii'),
         }
+        if pq_signer is not None:
+            pq_signature = pq_signer[0].sign(signed, PQ_SIGNATURE_CONTEXT)
+            anchor['pq_signature'] = base64.b64encode(pq_signature).decode('ascii')
 
         _append_anchor_line(anchor)
 
@@ -494,6 +634,8 @@ def verify_anchors() -> tuple[bool, str]:
 
     previous_anchor_hash = '0' * 64
     previous_ledger_count = 0
+    seen_pq = False
+    pq_public: tuple[Any, str] | None = None
 
     for index, anchor in enumerate(anchors, 1):
         try:
@@ -519,37 +661,23 @@ def verify_anchors() -> tuple[bool, str]:
             return False, f'ledger count regressed at anchor {index}'
 
         legacy = 'key_id' not in anchor
+        hybrid = anchor.get('schema') == ANCHOR_SCHEMA_V3
 
-        if legacy:
-            core = {
-                key: anchor[key]
-                for key in (
-                    'schema',
-                    'seq',
-                    'created_at',
-                    'ledger_count',
-                    'ledger_head',
-                    'prev_anchor_hash',
-                )
-            }
-            expected_hash = _legacy_anchor_hash(core)
-        else:
-            if anchor.get('key_id') != current_key_id:
-                return False, f'key identity mismatch at anchor {index}'
+        if seen_pq and not hybrid:
+            return False, f'post-quantum downgrade at anchor {index}'
 
-            core = {
-                key: anchor[key]
-                for key in (
-                    'schema',
-                    'seq',
-                    'created_at',
-                    'ledger_count',
-                    'ledger_head',
-                    'prev_anchor_hash',
-                    'key_id',
-                )
-            }
-            expected_hash = _canonical_anchor_hash(core)
+        try:
+            if legacy:
+                core = {key: anchor[key] for key in ANCHOR_CORE_LEGACY}
+                expected_hash = _legacy_anchor_hash(core)
+            else:
+                if anchor.get('key_id') != current_key_id:
+                    return False, f'key identity mismatch at anchor {index}'
+                fields = ANCHOR_CORE_V3 if hybrid else ANCHOR_CORE_V2
+                core = {key: anchor[key] for key in fields}
+                expected_hash = _canonical_anchor_hash(core)
+        except (KeyError, ValueError):
+            return False, f'anchor {index} malformed'
 
         if not secrets.compare_digest(expected_hash, anchor_hash):
             return False, f'anchor hash mismatch at {index}'
@@ -561,6 +689,24 @@ def verify_anchors() -> tuple[bool, str]:
             public_key.verify(signature, anchor_hash.encode('ascii'))
         except Exception:
             return False, f'anchor signature invalid at {index}'
+
+        if hybrid:
+            if pq_public is None:
+                try:
+                    pq_public = load_pq_public_key()
+                except Exception:
+                    return False, 'post-quantum verification unavailable'
+                if pq_public is None:
+                    return False, f'post-quantum public key missing for anchor {index}'
+            if anchor.get('pq_key_id') != pq_public[1]:
+                return False, f'post-quantum key identity mismatch at anchor {index}'
+            try:
+                pq_signature = base64.b64decode(anchor['pq_signature'], validate=True)
+                pq_public[0].verify(pq_signature, anchor_hash.encode('ascii'),
+                                    PQ_SIGNATURE_CONTEXT)
+            except Exception:
+                return False, f'post-quantum signature invalid at anchor {index}'
+            seen_pq = True
 
         previous_anchor_hash = anchor_hash
         previous_ledger_count = ledger_count
