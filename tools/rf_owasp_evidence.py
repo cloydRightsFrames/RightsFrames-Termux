@@ -105,14 +105,24 @@ def scan():
             args += ["--ossIndexUsername", username]
     else:
         print("::warning::OSS_INDEX_TOKEN absent; Sonatype coverage remains unavailable")
+    # Keep all unredacted scanner output in memory until it can be sanitized.
+    # subprocess.run prevents unmanaged long-lived child processes; the timeout
+    # is shorter than the 120-minute workflow limit and fails closed.
+    try:
+        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", timeout=6600, check=False)
+        output, code = result.stdout or "", result.returncode
+    except subprocess.TimeoutExpired as exc:
+        output = exc.stdout or b""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", "replace")
+        output += "\n[ERROR] Dependency-Check timed out before completion.\n"
+        code = 124
     with (REPORTS / "scan.log").open("w", encoding="utf-8") as log:
-        process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                   text=True, errors="replace")
-        for line in process.stdout:
+        for line in output.splitlines(keepends=True):
             clean = redact(line)
             log.write(clean)
             print(clean, end="", flush=True)
-        code = process.wait()
     for report in REPORTS.glob("dependency-check-report.*"):
         original = report.read_text(encoding="utf-8")
         clean = redact(original)
