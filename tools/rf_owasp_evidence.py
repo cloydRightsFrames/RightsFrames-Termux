@@ -175,7 +175,7 @@ def scan():
         "--entrypoint", "/bin/sh",
         IMAGE,
         "-c",
-        'set -eu; umask 077; cat > /run/secrets/rf-owasp.properties; exec "$@"',
+        'set -eu; umask 077; cat > /run/secrets/rf-owasp.properties; umask 022; exec "$@"',
         "rf-owasp",
         "/usr/share/dependency-check/bin/dependency-check.sh",
         "--project", repository,

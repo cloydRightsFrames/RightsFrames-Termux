@@ -205,6 +205,10 @@ class OwaspEvidenceTests(unittest.TestCase):
                     "cat > /run/secrets/rf-owasp.properties",
                     command
                 )
+                self.assertIn(
+                    "umask 022; exec",
+                    command
+                )
 
                 self.assertIn("nvd.api.key=" + key, kwargs["input"])
                 self.assertIn(
