@@ -6,7 +6,7 @@ updates:
   directory: /core
   schedule:
     interval: daily
-    time: 03:15
+    time: '03:15'
     timezone: UTC
   open-pull-requests-limit: 10
   reviewers:
@@ -24,7 +24,7 @@ updates:
   directory: /core
   schedule:
     interval: daily
-    time: 03:30
+    time: '03:30'
     timezone: UTC
   open-pull-requests-limit: 5
   reviewers:
@@ -46,7 +46,7 @@ updates:
   schedule:
     interval: weekly
     day: monday
-    time: 04:00
+    time: '04:00'
     timezone: UTC
   open-pull-requests-limit: 5
   reviewers:
