@@ -86,50 +86,149 @@ def redact(text):
     return text
 
 
+
+def validate_scanner_inputs(metadata):
+    if not isinstance(metadata, dict):
+        raise ValueError("Invalid scanner metadata")
+
+    runner = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+    snapshot_value = metadata.get("snapshot")
+
+    if not isinstance(snapshot_value, str):
+        raise ValueError("Invalid snapshot path")
+
+    if not snapshot_value.startswith("/"):
+        raise ValueError("Snapshot must be absolute")
+
+    if ":" in snapshot_value or "\\x00" in snapshot_value:
+        raise ValueError("Unsafe Docker mount path")
+
+    snapshot = Path(snapshot_value).resolve(strict=True)
+
+    if not snapshot.is_dir():
+        raise ValueError("Snapshot is not a directory")
+
+    if snapshot.parent != runner:
+        raise ValueError("Snapshot outside runner temporary directory")
+
+    if not snapshot.name.startswith("rf-owasp-"):
+        raise ValueError("Unexpected snapshot directory")
+
+    repository = os.environ.get("GITHUB_REPOSITORY", "")
+
+    if not re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
+        repository
+    ):
+        raise ValueError("Invalid repository identifier")
+
+    if any(part in (".", "..") for part in repository.split("/")):
+        raise ValueError("Repository traversal is forbidden")
+
+    return snapshot, repository
+
+
 def scan():
     metadata = json.loads((REPORTS / "input.json").read_text())
+    snapshot, repository = validate_scanner_inputs(metadata)
+
     key = os.environ.get("NVD_API_KEY", "").strip()
     if not key:
-        raise ValueError("NVD_API_KEY is unavailable to this job; refresh is required")
-    args = ["docker", "run", "--rm", "-v", metadata["snapshot"] + ":/github/workspace:ro",
-            "-v", str(REPORTS.resolve()) + ":/reports", "-w", "/github/workspace", IMAGE,
-            "--project", os.environ["GITHUB_REPOSITORY"], "--scan", ".",
-            "--format", "SARIF", "--format", "JSON", "--out", "/reports",
-            "--enableExperimental", "--enableRetired", "--failOnCVSS", "7",
-            "--nvdApiKey", key, "--nvdValidForHours", "0"]
+        raise ValueError("NVD_API_KEY is unavailable; fresh scanning is required")
+
     token = os.environ.get("OSS_INDEX_TOKEN", "").strip()
+    username = os.environ.get("OSS_INDEX_USERNAME", "").strip()
+
+    def property_value(label, value):
+        if not value or not value.isascii() or any(
+            not 33 <= ord(character) <= 126 for character in value
+        ):
+            raise ValueError("Invalid printable ASCII credential: " + label)
+        return value.replace("\\", "\\\\")
+
+    properties = ["nvd.api.key=" + property_value("NVD_API_KEY", key)]
+
     if token:
-        args += ["--ossIndexPassword", token]
-        username = os.environ.get("OSS_INDEX_USERNAME", "").strip()
+        properties.append(
+            "analyzer.ossindex.password="
+            + property_value("OSS_INDEX_TOKEN", token)
+        )
         if username:
-            args += ["--ossIndexUsername", username]
+            properties.append(
+                "analyzer.ossindex.user="
+                + property_value("OSS_INDEX_USERNAME", username)
+            )
     else:
-        print("::warning::OSS_INDEX_TOKEN absent; Sonatype coverage remains unavailable")
-    # Keep all unredacted scanner output in memory until it can be sanitized.
-    # subprocess.run prevents unmanaged long-lived child processes; the timeout
-    # is shorter than the 120-minute workflow limit and fails closed.
-    try:
-        result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace", timeout=6600, check=False)
-        output, code = result.stdout or "", result.returncode
-    except subprocess.TimeoutExpired as exc:
-        output = exc.stdout or b""
-        if isinstance(output, bytes):
-            output = output.decode("utf-8", "replace")
-        output += "\n[ERROR] Dependency-Check timed out before completion.\n"
-        code = 124
+        print("::warning::OSS_INDEX_TOKEN absent; Sonatype coverage unavailable")
+
+    with tempfile.TemporaryDirectory(
+        prefix="rf-owasp-secrets-",
+        dir=str(snapshot.parent),
+    ) as private_directory:
+
+        private_file = Path(private_directory) / "dependencycheck.properties"
+        private_file.write_text(
+            "\n".join(properties) + "\n",
+            encoding="ascii",
+        )
+        private_file.chmod(0o600)
+
+        secret_mount = (
+            str(private_file)
+            + ":/run/secrets/rf-owasp.properties:ro"
+        )
+
+        try:
+            result = subprocess.run(
+                [
+                    "docker", "run", "--rm",
+                    "-v", str(snapshot) + ":/github/workspace:ro",
+                    "-v", str(REPORTS.resolve()) + ":/reports",
+                    "-v", secret_mount,
+                    "-w", "/github/workspace",
+                    IMAGE,
+                    "--project", repository,
+                    "--scan", ".",
+                    "--format", "SARIF",
+                    "--format", "JSON",
+                    "--out", "/reports",
+                    "--enableExperimental",
+                    "--enableRetired",
+                    "--failOnCVSS", "7",
+                    "--propertyfile", "/run/secrets/rf-owasp.properties",
+                    "--nvdValidForHours", "0",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                errors="replace",
+                timeout=6600,
+                check=False,
+            )
+            output, code = result.stdout or "", result.returncode
+
+        except subprocess.TimeoutExpired as exc:
+            output = exc.stdout or b""
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", "replace")
+            output += "\n[ERROR] Dependency-Check timed out.\n"
+            code = 124
+
     with (REPORTS / "scan.log").open("w", encoding="utf-8") as log:
         for line in output.splitlines(keepends=True):
             clean = redact(line)
             log.write(clean)
             print(clean, end="", flush=True)
+
     for report in REPORTS.glob("dependency-check-report.*"):
         original = report.read_text(encoding="utf-8")
         clean = redact(original)
         if clean != original:
             report.write_text(clean, encoding="utf-8")
+
     (REPORTS / "scanner-exit-code.txt").write_text(str(code) + "\n")
     return code
+
 
 
 def timestamp(value):

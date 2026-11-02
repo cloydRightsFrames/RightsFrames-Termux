@@ -122,12 +122,18 @@ class OwaspEvidenceTests(unittest.TestCase):
 
     def test_scan_preserves_nonzero_status_and_redacts_output(self):
         with tempfile.TemporaryDirectory() as folder:
-            reports = Path(folder)
-            (reports / "input.json").write_text(json.dumps({"snapshot": folder}))
+            root = Path(folder)
+            reports = root / "reports"
+            reports.mkdir()
+            runner = root / "runner"
+            runner.mkdir()
+            snapshot = runner / "rf-owasp-fixture"
+            snapshot.mkdir()
+            (reports / "input.json").write_text(json.dumps({"snapshot": str(snapshot)}))
             secret = "test-only-nvd-key-never-commit"
             result = subprocess.CompletedProcess(["docker"], 7, stdout=f"scan failed {secret}\\n")
             with patch.object(e, "REPORTS", reports), patch.dict(
-                os.environ, {"NVD_API_KEY": secret, "GITHUB_REPOSITORY": "test/repo"}
+                os.environ, {"NVD_API_KEY": secret, "GITHUB_REPOSITORY": "test/repo", "RUNNER_TEMP": str(runner)}
             ), patch.object(e.subprocess, "run", return_value=result) as runner, contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(e.scan(), 7)
                 self.assertEqual(runner.call_args.kwargs["timeout"], 6600)
@@ -137,17 +143,157 @@ class OwaspEvidenceTests(unittest.TestCase):
 
     def test_scan_timeout_fails_closed_and_redacts_partial_output(self):
         with tempfile.TemporaryDirectory() as folder:
-            reports = Path(folder)
-            (reports / "input.json").write_text(json.dumps({"snapshot": folder}))
+            root = Path(folder)
+            reports = root / "reports"
+            reports.mkdir()
+            runner = root / "runner"
+            runner.mkdir()
+            snapshot = runner / "rf-owasp-fixture"
+            snapshot.mkdir()
+            (reports / "input.json").write_text(json.dumps({"snapshot": str(snapshot)}))
             secret = "test-only-nvd-key-timeout"
             exc = subprocess.TimeoutExpired(["docker"], 6600, output=f"stalled {secret}\\n".encode())
             with patch.object(e, "REPORTS", reports), patch.dict(
-                os.environ, {"NVD_API_KEY": secret, "GITHUB_REPOSITORY": "test/repo"}
+                os.environ, {"NVD_API_KEY": secret, "GITHUB_REPOSITORY": "test/repo", "RUNNER_TEMP": str(runner)}
             ), patch.object(e.subprocess, "run", side_effect=exc), contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(e.scan(), 124)
             self.assertNotIn(secret, (reports / "scan.log").read_text())
             self.assertIn("timed out", (reports / "scan.log").read_text())
             self.assertEqual((reports / "scanner-exit-code.txt").read_text().strip(), "124")
+
+
+    def test_private_credentials_never_enter_docker_arguments(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            runner = root / "runner"
+            runner.mkdir()
+            snapshot = runner / "rf-owasp-fixture"
+            snapshot.mkdir()
+            reports = root / "reports"
+            reports.mkdir()
+            (reports / "input.json").write_text(
+                json.dumps({"snapshot": str(snapshot)})
+            )
+
+            key = "RF_TEST_NVD_12345"
+            token = "RF_TEST_OSS_67890"
+            observed = []
+
+            def fake_run(args, **kwargs):
+                self.assertNotIn(key, args)
+                self.assertNotIn(token, args)
+                self.assertNotIn("--nvdApiKey", args)
+                self.assertNotIn("--ossIndexPassword", args)
+                self.assertIn("--propertyfile", args)
+                self.assertEqual(
+                    args[args.index("--propertyfile") + 1],
+                    "/run/secrets/rf-owasp.properties",
+                )
+
+                mounts = [
+                    arg for arg in args
+                    if isinstance(arg, str)
+                    and arg.endswith(
+                        ":/run/secrets/rf-owasp.properties:ro"
+                    )
+                ]
+                self.assertEqual(len(mounts), 1)
+
+                secret_path = Path(
+                    mounts[0].split(":/run/secrets/", 1)[0]
+                )
+                self.assertEqual(
+                    secret_path.stat().st_mode & 0o777, 0o600
+                )
+                contents = secret_path.read_text()
+                self.assertIn("nvd.api.key=" + key, contents)
+                self.assertIn(
+                    "analyzer.ossindex.password=" + token,
+                    contents,
+                )
+                observed.append(secret_path)
+
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="MOCK_SCAN_OK"
+                )
+
+            env = {
+                "RUNNER_TEMP": str(runner),
+                "GITHUB_REPOSITORY": "test/repo",
+                "NVD_API_KEY": key,
+                "OSS_INDEX_TOKEN": token,
+                "OSS_INDEX_USERNAME": "fixture-user",
+            }
+
+            with patch.object(e, "REPORTS", reports):
+                with patch.dict(os.environ, env, clear=True):
+                    with patch.object(
+                        e.subprocess, "run", side_effect=fake_run
+                    ):
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(e.scan(), 0)
+
+            self.assertEqual(len(observed), 1)
+            self.assertFalse(observed[0].exists())
+            self.assertNotIn(
+                key, (reports / "scan.log").read_text()
+            )
+
+    def test_repository_traversal_rejected_before_docker(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            runner = root / "runner"
+            runner.mkdir()
+            snapshot = runner / "rf-owasp-fixture"
+            snapshot.mkdir()
+            reports = root / "reports"
+            reports.mkdir()
+            (reports / "input.json").write_text(
+                json.dumps({"snapshot": str(snapshot)})
+            )
+
+            env = {
+                "RUNNER_TEMP": str(runner),
+                "GITHUB_REPOSITORY": "test/..",
+                "NVD_API_KEY": "RF_TEST_ONLY",
+            }
+
+            with patch.object(e, "REPORTS", reports):
+                with patch.dict(os.environ, env, clear=True):
+                    with patch.object(
+                        e.subprocess, "run",
+                        side_effect=AssertionError("Docker executed"),
+                    ):
+                        with self.assertRaises(ValueError):
+                            e.scan()
+
+    def test_outside_snapshot_rejected_before_docker(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            runner = root / "runner"
+            runner.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            reports = root / "reports"
+            reports.mkdir()
+            (reports / "input.json").write_text(
+                json.dumps({"snapshot": str(outside)})
+            )
+
+            env = {
+                "RUNNER_TEMP": str(runner),
+                "GITHUB_REPOSITORY": "test/repo",
+                "NVD_API_KEY": "RF_TEST_ONLY",
+            }
+
+            with patch.object(e, "REPORTS", reports):
+                with patch.dict(os.environ, env, clear=True):
+                    with patch.object(
+                        e.subprocess, "run",
+                        side_effect=AssertionError("Docker executed"),
+                    ):
+                        with self.assertRaises(ValueError):
+                            e.scan()
 
 
 if __name__ == "__main__":
