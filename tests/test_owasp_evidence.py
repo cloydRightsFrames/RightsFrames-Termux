@@ -1,4 +1,8 @@
+import contextlib
 import copy
+import io
+import json
+import subprocess
 import datetime as dt
 import importlib.util
 import os
@@ -115,6 +119,35 @@ class OwaspEvidenceTests(unittest.TestCase):
     def test_secret_redaction(self):
         with patch.dict(os.environ, {"NVD_API_KEY": "test-only-not-a-key", "OSS_INDEX_TOKEN": "test-only-token"}):
             self.assertEqual(e.redact("test-only-not-a-key test-only-token"), "*** ***")
+
+    def test_scan_preserves_nonzero_status_and_redacts_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            reports = Path(folder)
+            (reports / "input.json").write_text(json.dumps({"snapshot": folder}))
+            secret = "test-only-nvd-key-never-commit"
+            result = subprocess.CompletedProcess(["docker"], 7, stdout=f"scan failed {secret}\\n")
+            with patch.object(e, "REPORTS", reports), patch.dict(
+                os.environ, {"NVD_API_KEY": secret, "GITHUB_REPOSITORY": "test/repo"}
+            ), patch.object(e.subprocess, "run", return_value=result) as runner, contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(e.scan(), 7)
+                self.assertEqual(runner.call_args.kwargs["timeout"], 6600)
+            self.assertNotIn(secret, (reports / "scan.log").read_text())
+            self.assertIn("***", (reports / "scan.log").read_text())
+            self.assertEqual((reports / "scanner-exit-code.txt").read_text().strip(), "7")
+
+    def test_scan_timeout_fails_closed_and_redacts_partial_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            reports = Path(folder)
+            (reports / "input.json").write_text(json.dumps({"snapshot": folder}))
+            secret = "test-only-nvd-key-timeout"
+            exc = subprocess.TimeoutExpired(["docker"], 6600, output=f"stalled {secret}\\n".encode())
+            with patch.object(e, "REPORTS", reports), patch.dict(
+                os.environ, {"NVD_API_KEY": secret, "GITHUB_REPOSITORY": "test/repo"}
+            ), patch.object(e.subprocess, "run", side_effect=exc), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(e.scan(), 124)
+            self.assertNotIn(secret, (reports / "scan.log").read_text())
+            self.assertIn("timed out", (reports / "scan.log").read_text())
+            self.assertEqual((reports / "scanner-exit-code.txt").read_text().strip(), "124")
 
 
 if __name__ == "__main__":
