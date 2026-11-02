@@ -97,10 +97,10 @@ def validate_scanner_inputs(metadata):
     if not isinstance(snapshot_value, str):
         raise ValueError("Invalid snapshot path")
 
-    if not snapshot_value.startswith("/"):
+    if not Path(snapshot_value).is_absolute():
         raise ValueError("Snapshot must be absolute")
 
-    if ":" in snapshot_value or "\\x00" in snapshot_value:
+    if any(ord(ch) < 32 for ch in snapshot_value) or (os.name != "nt" and ":" in snapshot_value):
         raise ValueError("Unsafe Docker mount path")
 
     snapshot = Path(snapshot_value).resolve(strict=True)
@@ -161,58 +161,54 @@ def scan():
     else:
         print("::warning::OSS_INDEX_TOKEN absent; Sonatype coverage unavailable")
 
-    with tempfile.TemporaryDirectory(
-        prefix="rf-owasp-secrets-",
-        dir=str(snapshot.parent),
-    ) as private_directory:
 
-        private_file = Path(private_directory) / "dependencycheck.properties"
-        private_file.write_text(
-            "\n".join(properties) + "\n",
-            encoding="ascii",
+    # Transfer credentials through stdin, not argv or host files.
+    # The scanner property file exists only in container tmpfs.
+    secret_input = "\n".join(properties) + "\n"
+
+    args = [
+        "docker", "run", "--rm", "-i",
+        "--tmpfs", "/run/secrets:rw,noexec,nosuid,nodev,mode=0700",
+        "-v", str(snapshot) + ":/github/workspace:ro",
+        "-v", str(REPORTS.resolve()) + ":/reports",
+        "-w", "/github/workspace",
+        "--entrypoint", "/bin/sh",
+        IMAGE,
+        "-c",
+        'set -eu; umask 077; cat > /run/secrets/rf-owasp.properties; exec "$@"',
+        "rf-owasp",
+        "/usr/share/dependency-check/bin/dependency-check.sh",
+        "--project", repository,
+        "--scan", ".",
+        "--format", "SARIF",
+        "--format", "JSON",
+        "--out", "/reports",
+        "--enableExperimental",
+        "--enableRetired",
+        "--failOnCVSS", "7",
+        "--propertyfile", "/run/secrets/rf-owasp.properties",
+        "--nvdValidForHours", "0",
+    ]
+
+    try:
+        result = subprocess.run(
+            args,
+            input=secret_input,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            timeout=6600,
+            check=False,
         )
-        private_file.chmod(0o600)
+        output, code = result.stdout or "", result.returncode
 
-        secret_mount = (
-            str(private_file)
-            + ":/run/secrets/rf-owasp.properties:ro"
-        )
-
-        try:
-            result = subprocess.run(
-                [
-                    "docker", "run", "--rm",
-                    "-v", str(snapshot) + ":/github/workspace:ro",
-                    "-v", str(REPORTS.resolve()) + ":/reports",
-                    "-v", secret_mount,
-                    "-w", "/github/workspace",
-                    IMAGE,
-                    "--project", repository,
-                    "--scan", ".",
-                    "--format", "SARIF",
-                    "--format", "JSON",
-                    "--out", "/reports",
-                    "--enableExperimental",
-                    "--enableRetired",
-                    "--failOnCVSS", "7",
-                    "--propertyfile", "/run/secrets/rf-owasp.properties",
-                    "--nvdValidForHours", "0",
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                errors="replace",
-                timeout=6600,
-                check=False,
-            )
-            output, code = result.stdout or "", result.returncode
-
-        except subprocess.TimeoutExpired as exc:
-            output = exc.stdout or b""
-            if isinstance(output, bytes):
-                output = output.decode("utf-8", "replace")
-            output += "\n[ERROR] Dependency-Check timed out.\n"
-            code = 124
+    except subprocess.TimeoutExpired as exc:
+        output = exc.stdout or b""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", "replace")
+        output += "\n[ERROR] Dependency-Check timed out.\n"
+        code = 124
 
     with (REPORTS / "scan.log").open("w", encoding="utf-8") as log:
         for line in output.splitlines(keepends=True):

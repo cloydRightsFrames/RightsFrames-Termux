@@ -162,6 +162,7 @@ class OwaspEvidenceTests(unittest.TestCase):
             self.assertEqual((reports / "scanner-exit-code.txt").read_text().strip(), "124")
 
 
+
     def test_private_credentials_never_enter_docker_arguments(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -171,47 +172,56 @@ class OwaspEvidenceTests(unittest.TestCase):
             snapshot.mkdir()
             reports = root / "reports"
             reports.mkdir()
+
             (reports / "input.json").write_text(
                 json.dumps({"snapshot": str(snapshot)})
             )
 
             key = "RF_TEST_NVD_12345"
             token = "RF_TEST_OSS_67890"
-            observed = []
+            calls = []
 
             def fake_run(args, **kwargs):
-                self.assertNotIn(key, args)
-                self.assertNotIn(token, args)
-                self.assertNotIn("--nvdApiKey", args)
-                self.assertNotIn("--ossIndexPassword", args)
+                command = " ".join(args)
+
+                self.assertNotIn(key, command)
+                self.assertNotIn(token, command)
+
+                self.assertIn("--tmpfs", args)
+                self.assertIn("--entrypoint", args)
                 self.assertIn("--propertyfile", args)
+
+                self.assertEqual(
+                    args[args.index("--entrypoint") + 1],
+                    "/bin/sh"
+                )
+
                 self.assertEqual(
                     args[args.index("--propertyfile") + 1],
-                    "/run/secrets/rf-owasp.properties",
+                    "/run/secrets/rf-owasp.properties"
                 )
 
-                mounts = [
-                    arg for arg in args
-                    if isinstance(arg, str)
-                    and arg.endswith(
-                        ":/run/secrets/rf-owasp.properties:ro"
-                    )
-                ]
-                self.assertEqual(len(mounts), 1)
+                self.assertIn(
+                    "cat > /run/secrets/rf-owasp.properties",
+                    command
+                )
 
-                secret_path = Path(
-                    mounts[0].split(":/run/secrets/", 1)[0]
-                )
-                self.assertEqual(
-                    secret_path.stat().st_mode & 0o777, 0o600
-                )
-                contents = secret_path.read_text()
-                self.assertIn("nvd.api.key=" + key, contents)
+                self.assertIn("nvd.api.key=" + key, kwargs["input"])
                 self.assertIn(
                     "analyzer.ossindex.password=" + token,
-                    contents,
+                    kwargs["input"]
                 )
-                observed.append(secret_path)
+
+                self.assertNotIn(
+                    "--nvdApiKey", args
+                )
+
+                self.assertNotIn(
+                    "--ossIndexPassword", args
+                )
+
+                self.assertTrue(kwargs["text"])
+                calls.append(True)
 
                 return subprocess.CompletedProcess(
                     args, 0, stdout="MOCK_SCAN_OK"
@@ -233,11 +243,11 @@ class OwaspEvidenceTests(unittest.TestCase):
                         with contextlib.redirect_stdout(io.StringIO()):
                             self.assertEqual(e.scan(), 0)
 
-            self.assertEqual(len(observed), 1)
-            self.assertFalse(observed[0].exists())
+            self.assertEqual(len(calls), 1)
             self.assertNotIn(
                 key, (reports / "scan.log").read_text()
             )
+
 
     def test_repository_traversal_rejected_before_docker(self):
         with tempfile.TemporaryDirectory() as folder:
