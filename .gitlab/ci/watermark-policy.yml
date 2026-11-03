@@ -1,0 +1,18 @@
+# RightsFrames GitLab watermark policy template.
+# Intentionally inert until included by the existing root .gitlab-ci.yml:
+# include:
+#   - local: '.gitlab/ci/watermark-policy.yml'
+#
+# This does not rewrite code, evidence, history or existing pipeline configuration.
+rightsframes_watermark_policy:
+  stage: test
+  image: python:3.12-slim-bookworm
+  variables:
+    GIT_DEPTH: "0"
+    GIT_STRATEGY: fetch
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - python3 -m py_compile tools/rightsframes_watermark_ci.py
+    - python3 tools/rightsframes_watermark_ci.py --scan-head
