@@ -1,0 +1,32 @@
+name: RightsFrames Watermark Policy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rightsframes-watermark-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  watermark-policy:
+    name: Watermark policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout committed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Confirm scanner syntax
+        run: python3 -m py_compile tools/rightsframes_watermark_ci.py
+      - name: Verify detection and false-positive controls
+        run: python3 tools/rightsframes_watermark_ci.py --selftest
+      - name: Enforce read-only watermark policy on committed tree
+        run: python3 tools/rightsframes_watermark_ci.py --scan-head
