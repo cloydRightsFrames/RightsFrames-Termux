@@ -141,7 +141,7 @@ jobs:
         with:
           path: ./
           extra_args: --debug
-      - uses: GitGuardian/ggshield-action@10e9055712b4630c3d514ec16dca25c94b752b52
+      - uses: GitGuardian/ggshield-action@5cc1ed2be3e8bf625d354c7170731880670f74de
         env:
           GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
           GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
