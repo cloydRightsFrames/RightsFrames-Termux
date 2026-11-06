@@ -38,7 +38,8 @@ certifi==2026.10.23 \
     #   httpcore
     #   httpx
     #   requests
-cffi==2.1.1 ; platform_python_implementation != 'PyPy' \
+    #   semgrep
+cffi==2.1.1 \
     --hash=sha256:046bfc24911b37851ee1b51aab8bffe713d89c68c6a057b09484ce9fd5f69b4e \
     --hash=sha256:06c72bb76605a4b0cd0aad6930b69d4baf7dd5d806cfc409b824191099700e66 \
     --hash=sha256:0beceaabe56af686895136a2de78db54ecd8e4046b236b8fd6d6cb61389e9bf2 \
@@ -328,9 +329,7 @@ click-option-group==0.5.9 \
 colorama==0.4.6 \
     --hash=sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44 \
     --hash=sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6
-    # via
-    #   click
-    #   semgrep
+    # via semgrep
 cryptography==50.0.2 \
     --hash=sha256:0ddc924c04591c2811ca024d62ecad4f7f6f08af8939c211438f48a16bd23602 \
     --hash=sha256:0ec5f09541743261e66e291b4a0cbf0fb2997aeaab6d9e9c740b9dba1b58d1c2 \
@@ -539,7 +538,7 @@ protobuf==6.33.6 \
     # via
     #   googleapis-common-protos
     #   opentelemetry-proto
-pycparser==3.12 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy' \
+pycparser==3.12 \
     --hash=sha256:a076f3f489b39b43ed13563a1dafe42447445bec2e294154ec5c57fcdda4c85e \
     --hash=sha256:f03387877eab82ce01bbdfd0ba7252ee55a90b1c708d5129e2ce915475cf1db6
     # via cffi
@@ -699,7 +698,7 @@ pygments==2.21.0 \
     --hash=sha256:2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9 \
     --hash=sha256:610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c
     # via rich
-pyjwt==2.15.1 \
+pyjwt[crypto]==2.15.1 \
     --hash=sha256:42d59d631f7768a1028a64c7ff581a9bf7519804daf91fc5b6c56e30eec5e193 \
     --hash=sha256:4f259e80cdfb6b3fc18a7de51fd1ef9ec79652f25019bae68975ca2468a34df8
     # via
@@ -713,30 +712,6 @@ python-multipart==0.0.33 \
     --hash=sha256:8f16c07b36add9da6b2ee87d3efcaf0a45a6de9c3d0a5dd94e9ccf7675a7bc45 \
     --hash=sha256:b8112424a6abd162ec08d390565dd113ad699f2fe6fef3c987b8bbcbfe9e390d
     # via mcp
-pywin32==311 ; sys_platform == 'win32' \
-    --hash=sha256:0502d1facf1fed4839a9a51ccbcc63d952cf318f78ffc00a7e78528ac27d7a2b \
-    --hash=sha256:184eb5e436dea364dcd3d2316d577d625c0351bf237c4e9a5fabbcfa5a58b151 \
-    --hash=sha256:3aca44c046bd2ed8c90de9cb8427f581c479e594e99b5c0bb19b29c10fd6cb87 \
-    --hash=sha256:3ce80b34b22b17ccbd937a6e78e7225d80c52f5ab9940fe0506a1a16f3dab503 \
-    --hash=sha256:62ea666235135fee79bb154e695f3ff67370afefd71bd7fea7512fc70ef31e3d \
-    --hash=sha256:6c6f2969607b5023b0d9ce2541f8d2cbb01c4f46bc87456017cf63b73f1e2d8c \
-    --hash=sha256:718a38f7e5b058e76aee1c56ddd06908116d35147e133427e59a3983f703a20d \
-    --hash=sha256:750ec6e621af2b948540032557b10a2d43b0cee2ae9758c54154d711cc852d31 \
-    --hash=sha256:797c2772017851984b97180b0bebe4b620bb86328e8a884bb626156295a63b3b \
-    --hash=sha256:7b4075d959648406202d92a2310cb990fea19b535c7f4a78d3f5e10b926eeb8a \
-    --hash=sha256:a508e2d9025764a8270f93111a970e1d0fbfc33f4153b388bb649b7eec4f9b42 \
-    --hash=sha256:a733f1388e1a842abb67ffa8e7aad0e70ac519e09b0f6a784e65a136ec7cefd2 \
-    --hash=sha256:aba8f82d551a942cb20d4a83413ccbac30790b50efb89a75e4f586ac0bb8056b \
-    --hash=sha256:b7a2c10b93f8986666d0c803ee19b5990885872a7de910fc460f9b0c2fbf92ee \
-    --hash=sha256:b8c095edad5c211ff31c05223658e71bf7116daa0ecf3ad85f3201ea3190d067 \
-    --hash=sha256:c8015b09fb9a5e188f83b7b04de91ddca4658cee2ae6f3bc483f0b21a77ef6cd \
-    --hash=sha256:d03ff496d2a0cd4a5893504789d4a15399133fe82517455e78bad62efbb7f0a3 \
-    --hash=sha256:e0c4cfb0621281fe40387df582097fd796e80430597cb9944f0ae70447bacd91 \
-    --hash=sha256:e286f46a9a39c4a18b319c28f59b61de793654af2f395c102b4f819e584b5852 \
-    --hash=sha256:f95ba5a847cba10dd8c4d8fefa9f2a6cf283b8b88ed6178fa8a6c1ab16054d0d
-    # via
-    #   mcp
-    #   semgrep
 referencing==0.37.0 \
     --hash=sha256:381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231 \
     --hash=sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8
@@ -956,16 +931,22 @@ semantic-version==2.10.0 \
     --hash=sha256:bdabb6d336998cbb378d4b9db3a4b56a1e3235701dc05ea2690d9a997ed5041c \
     --hash=sha256:de78a3b8e0feda74cabc54aab2da702113e33ac9d9eb9d2389bcf1f58b7d9177
     # via semgrep
-semgrep==1.179.0 \
-    --hash=sha256:34b5e801e3f4325c93014124ccfab6da96857f74aae68458d2a07defd4727b0f \
-    --hash=sha256:69bce348296374df6c51e72758801ce06dd18d6dfb307bc73d24b9de53bbe5f1 \
-    --hash=sha256:6c6cf104ad0959c0b11de56d15c5d31f56949c620b4bd130c5d1fb899f2bb5a3 \
-    --hash=sha256:9b57026f587a4bc7833bca2b6e4d6778072a79dcf0b9f2e5e01d3d5df39c7759 \
-    --hash=sha256:b529c4db63f293918989b84ce4640f12f1b1e4680d9e7fcab5f3554f9113dfc5 \
-    --hash=sha256:c23d79c4839540372acc39b59aad167c1c7f3dc21bacacb27f19aa2edd79d271 \
-    --hash=sha256:c7e32b952990434b591003547f26b46c89a5bd56033715b00ff26327a8abe8c5 \
-    --hash=sha256:dc6317fbfad49b1dbe396df7da7d9702cffc5ea9ea62cb3b4b2209824496b425
-    # via -r .github/scripts/requirements-semgrep.in
+semgrep==1.183.0 \
+    --hash=sha256:204dce82a74be29cf6d84aa6a32b2244ff7429fafd3d77e0ea44996d0398ba4a \
+    --hash=sha256:204dce82a74be29cf6d84aa6a32b2244ff7429fafd3d77e0ea44996d0398ba4a \
+    --hash=sha256:8e9d96b976d6cb8e1240d454e50245decd52d1329d84540df26c7f06787439f7 \
+    --hash=sha256:8e9d96b976d6cb8e1240d454e50245decd52d1329d84540df26c7f06787439f7 \
+    --hash=sha256:a06b09d20c5595a31be210283b8ce50251305d49fb6e9214b50329a119779751 \
+    --hash=sha256:a06b09d20c5595a31be210283b8ce50251305d49fb6e9214b50329a119779751 \
+    --hash=sha256:b058cc62ca32af79d2eaf44c3ff0931bfecc74857107eaf6b1b0ebb6676604ec \
+    --hash=sha256:b058cc62ca32af79d2eaf44c3ff0931bfecc74857107eaf6b1b0ebb6676604ec \
+    --hash=sha256:d6c85da0e679423faa82e31191460b4746124f73b29af8e864ba10a421f91037 \
+    --hash=sha256:d6c85da0e679423faa82e31191460b4746124f73b29af8e864ba10a421f91037 \
+    --hash=sha256:f36115c4d0cb43056ceb308273421a2f6a35e055e7e029601e130850f836646e \
+    --hash=sha256:f36115c4d0cb43056ceb308273421a2f6a35e055e7e029601e130850f836646e \
+    --hash=sha256:fa13eb666ea84cb9d11cea244cb106fefde57ffe51e251a0f91c7de1c4da0944 \
+    --hash=sha256:fa13eb666ea84cb9d11cea244cb106fefde57ffe51e251a0f91c7de1c4da0944
+    # via -r requirements-semgrep.in
 sse-starlette==3.6.0 \
     --hash=sha256:623151d6c20dc0eebf1b3379c27faae91fff883bac7ab6665f16f46440a88b3a \
     --hash=sha256:e4dfa4d237d2712cb2b4d4918eda9b457cd6b44bbecdc838af75de836565bafd
@@ -1029,7 +1010,6 @@ typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
     # via
-    #   anyio
     #   mcp
     #   opentelemetry-api
     #   opentelemetry-exporter-otlp-proto-http
@@ -1038,9 +1018,7 @@ typing-extensions==4.16.0 \
     #   pydantic
     #   pydantic-core
     #   pydantic-settings
-    #   referencing
     #   semgrep
-    #   starlette
     #   typing-inspection
 typing-inspection==0.4.5 \
     --hash=sha256:7f16c411e7930dc79596d42ab44672a3fe5f60eb34b781a1647e7872363120c7 \
@@ -1055,7 +1033,7 @@ urllib3==2.8.0 \
     # via
     #   requests
     #   semgrep
-uvicorn==0.54.0 ; sys_platform != 'emscripten' \
+uvicorn==0.54.0 \
     --hash=sha256:505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf \
     --hash=sha256:a2e33cbfaa0306f8e6b0c13e0cb89d7d7a2da3e62b90c66e18c33d9807b28620
     # via mcp

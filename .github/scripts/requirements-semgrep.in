@@ -3,4 +3,4 @@
 #
 #   uv pip compile .github/scripts/requirements-semgrep.in --universal --generate-hashes \
 #     --python-version 3.12 -o .github/scripts/requirements-semgrep.txt
-semgrep==1.179.0
+semgrep==1.183.0
