@@ -72,28 +72,44 @@ jobs:
           test "${CODE}" = 401
           curl -fsS -X POST "${BASE}/entries" -H 'Content-Type: application/json' -H "X-API-Key: ${RF_API_KEY}" -d "${BODY}" >/dev/null
           curl -fsS -X POST "${BASE}/anchor" -H "X-API-Key: ${RF_API_KEY}" >/dev/null
-          curl -fsS "${BASE}/health" | python3 -c 'import json, sys; d = json.load(sys.stdin); assert d["status"] == "ok" and d["ledger_ok"] is True and d["anchors_ok"] is True, d'
+          curl -fsS -o "${RUNNER_TEMP}/health.json" "${BASE}/health"
+          python3 -c 'import json, sys; d = json.load(open(sys.argv[1], encoding="utf-8")); assert d["status"] == "ok" and d["ledger_ok"] is True and d["anchors_ok"] is True, d' "${RUNNER_TEMP}/health.json"
 
+          STARTED_BEFORE="$(docker inspect -f '{{.State.StartedAt}}' "${CID}")"
           docker compose restart rightsframes-core
+          test "$(docker inspect -f '{{.State.StartedAt}}' "${CID}")" != "${STARTED_BEFORE}"
+          UP=0
           for _ in $(seq 1 60); do
-            STATE="$(docker inspect -f '{{.State.Health.Status}}' "${CID}")"
-            [ "${STATE}" = healthy ] && break
+            if curl -fsS -o "${RUNNER_TEMP}/health.json" "${BASE}/health" 2>/dev/null; then UP=1; break; fi
             sleep 2
           done
-          test "${STATE}" = healthy
-          curl -fsS "${BASE}/health" | python3 -c 'import json, sys; d = json.load(sys.stdin); assert d["status"] == "ok" and d["ledger_ok"] is True and d["anchors_ok"] is True, d'
+          test "${UP}" = 1
+          python3 -c 'import json, sys; d = json.load(open(sys.argv[1], encoding="utf-8")); assert d["status"] == "ok" and d["ledger_ok"] is True and d["anchors_ok"] is True, d' "${RUNNER_TEMP}/health.json"
           echo 'CONTAINER_RUNTIME_VERIFICATION=PASS'
 
-      - name: Scan the built image (OS packages and Python libraries)
+      - name: List image findings (all severities, readable)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: image
           image-ref: ${{ env.RF_IMAGE }}
+          scanners: vuln
+          format: table
+          ignore-unfixed: true
+          exit-code: '0'
+
+      - name: Gate on fixed CRITICAL and HIGH image vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: ${{ env.RF_IMAGE }}
+          scanners: vuln,secret
           format: sarif
           output: trivy-image.sarif
           severity: CRITICAL,HIGH
+          limit-severities-for-sarif: true
           ignore-unfixed: true
           exit-code: '1'
+          skip-setup-trivy: true
 
       - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370
         if: always() && hashFiles('trivy-image.sarif') != ''
