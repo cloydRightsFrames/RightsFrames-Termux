@@ -58,12 +58,13 @@ def read_locks(root):
     return packages, files
 
 
-# CI tool locks are not product dependencies. They are audited against the
-# PyPI advisory database by the "Dependency audit (pip-audit)" job. Their
-# multi-line hashed format is not understood by Dependency-Check's
-# experimental pip analyzer, which turns continuation lines into bogus
-# packages, so they are left out of the scanner copy (and recorded).
-CI_TOOL_LOCK_DIR = Path(".github") / "scripts"
+# CI tool locks (every requirements*.txt under .github/) are not product
+# dependencies. They are audited against the PyPI advisory database by the
+# "Dependency audit (pip-audit)" job. Their multi-line hashed format is not
+# understood by Dependency-Check's experimental pip analyzer, which turns
+# continuation lines into bogus packages, so they are left out of the scanner
+# copy (and recorded).
+CI_TOOL_LOCK_DIR = Path(".github")
 
 
 def exclude_ci_tool_locks(snapshot):
