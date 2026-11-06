@@ -58,6 +58,24 @@ def read_locks(root):
     return packages, files
 
 
+# CI tool locks are not product dependencies. They are audited against the
+# PyPI advisory database by the "Dependency audit (pip-audit)" job. Their
+# multi-line hashed format is not understood by Dependency-Check's
+# experimental pip analyzer, which turns continuation lines into bogus
+# packages, so they are left out of the scanner copy (and recorded).
+CI_TOOL_LOCK_DIR = Path(".github") / "scripts"
+
+
+def exclude_ci_tool_locks(snapshot):
+    tool_dir = snapshot / CI_TOOL_LOCK_DIR
+    if not tool_dir.is_dir():
+        return []
+    removed = sorted(p for p in tool_dir.rglob("requirements*.txt") if p.is_file())
+    for path in removed:
+        path.unlink()
+    return [path.relative_to(snapshot).as_posix() for path in removed]
+
+
 def prepare():
     REPORTS.mkdir(parents=True, exist_ok=False)
     root = Path.cwd()
@@ -69,11 +87,14 @@ def prepare():
         with tarfile.open(fileobj=archive) as source:
             source.extractall(snapshot, filter="data")
     (snapshot / LOCKS[0]).write_text("\n".join(sorted(packages)) + "\n", encoding="utf-8")
+    excluded = exclude_ci_tool_locks(snapshot)
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     dump(REPORTS / "input.json", {"commit": commit, "prepared_at": now().isoformat(),
          "snapshot": str(snapshot), "scanner_image": IMAGE,
-         "lockfile_sha256": files, "packages": packages})
+         "lockfile_sha256": files, "packages": packages,
+         "ci_tool_locks_audited_by_pip_audit": excluded})
     print(f"SCANNER_INPUT_PACKAGES={len(packages)}; original hash locks preserved")
+    print(f"CI_TOOL_LOCKS_LEFT_TO_PIP_AUDIT={len(excluded)}")
 
 
 def redact(text):

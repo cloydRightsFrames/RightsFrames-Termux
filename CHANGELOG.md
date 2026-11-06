@@ -23,7 +23,10 @@ every release is an annotated tag built, reproduced and attested by
   3.12 on Linux and Windows.
 - Lint gate (`ruff`, correctness rules only) with a hash-locked ruff.
 - Dependency audit: `pip-audit` (hash-locked) checks every requirements lock in the
-  repository, runtime, tests and CI tools, on every change and weekly.
+  repository, runtime, tests and CI tools, on every change and weekly. OWASP
+  Dependency-Check keeps scanning the product's runtime and test dependencies; the CI
+  tool locks are left out of its scan copy (its pip analyzer cannot read their hashed
+  multi-line format) and recorded in its evidence as audited by pip-audit.
 - OpenSSF Scorecard workflow with a published badge.
 - `CODEOWNERS`, pull request template and issue forms; `SECURITY.md` now states
   supported versions, response timelines and coordinated disclosure.
