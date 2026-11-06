@@ -21,6 +21,7 @@ jobs:
   source-integrity:
     name: Source integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout immutable revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -70,6 +71,7 @@ jobs:
   test:
     name: Core verification
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout immutable revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -109,6 +111,7 @@ jobs:
   zero-trust-policy:
     name: Zero trust supply-chain policy
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout immutable revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -123,6 +126,70 @@ jobs:
           set -euo pipefail
           python3 tools/verify_supply_chain_policy.py
 
+  sbom:
+    name: Release SBOM
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout immutable revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+
+      - name: Install the hash-locked SBOM tool set
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --require-hashes -r .github/scripts/requirements-sbom.txt
+
+      - name: Generate the CycloneDX SBOM twice and require identical bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            REF_NAME="${GITHUB_REF_NAME}"
+          else
+            VERSION="0.0.0+g${GITHUB_SHA:0:12}"
+            REF_NAME="${GITHUB_SHA:0:12}"
+          fi
+          NAME="RightsFrames-Termux-${REF_NAME}.cdx.json"
+          EPOCH="$(git log -1 --format=%ct "${GITHUB_SHA}")"
+          mkdir -p sbom "${RUNNER_TEMP}/sbom-again"
+          for OUT in "sbom/${NAME}" "${RUNNER_TEMP}/sbom-again/${NAME}"; do
+            python tools/rf_release_sbom.py generate \
+              --requirements core/requirements.txt \
+              --version "${VERSION}" \
+              --repository "${GITHUB_REPOSITORY}" \
+              --commit "${GITHUB_SHA}" \
+              --ref-name "${REF_NAME}" \
+              --epoch "${EPOCH}" \
+              --out "${OUT}"
+          done
+          cmp "sbom/${NAME}" "${RUNNER_TEMP}/sbom-again/${NAME}"
+          python tools/rf_release_sbom.py verify \
+            --sbom "sbom/${NAME}" \
+            --requirements core/requirements.txt \
+            --version "${VERSION}"
+          (cd sbom && sha256sum "${NAME}" > SBOM-SHA256SUMS)
+          cat sbom/SBOM-SHA256SUMS
+          echo 'SBOM_REPRODUCIBLE=PASS'
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: rightsframes-sbom-${{ github.sha }}
+          path: sbom
+          if-no-files-found: error
+          retention-days: 90
+
   build-a:
     name: Reproducible build A
     needs:
@@ -131,6 +198,7 @@ jobs:
       - zero-trust-policy
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout exact tagged revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -179,6 +247,7 @@ jobs:
       - zero-trust-policy
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout exact tagged revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -226,6 +295,7 @@ jobs:
       - build-b
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Download build A
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -320,8 +390,10 @@ jobs:
       - test
       - reproducibility
       - slsa3-build
+      - sbom
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Download canonical artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
@@ -346,6 +418,30 @@ jobs:
           subject-path: dist/RightsFrames-Termux-${{ github.ref_name }}.tar.gz
           show-summary: true
 
+      - name: Download SBOM
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: rightsframes-sbom-${{ github.sha }}
+          path: sbom
+
+      - name: Verify SBOM before attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "sbom/RightsFrames-Termux-${GITHUB_REF_NAME}.cdx.json"
+          (
+            cd sbom
+            sha256sum -c SBOM-SHA256SUMS
+          )
+
+      - name: Attest the SBOM to the release artifact
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-path: dist/RightsFrames-Termux-${{ github.ref_name }}.tar.gz
+          predicate-type: https://cyclonedx.org/bom
+          predicate-path: sbom/RightsFrames-Termux-${{ github.ref_name }}.cdx.json
+          show-summary: true
+
       - name: Produce release manifest
         shell: bash
         run: |
@@ -353,6 +449,8 @@ jobs:
           ART="RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
           DIGEST="$(sha256sum "dist/${ART}" | awk '{print $1}')"
           TREE="$(cat dist/SOURCE_TREE)"
+          SBOM="RightsFrames-Termux-${GITHUB_REF_NAME}.cdx.json"
+          SBOM_DIGEST="$(sha256sum "sbom/${SBOM}" | awk '{print $1}')"
 
           python3 - <<PY
           import json
@@ -376,7 +474,13 @@ jobs:
               "repositoryVisibility": "public",
               "reproducible": True,
               "independentBuilds": 2,
-              "attested": True
+              "attested": True,
+              "sbom": "${SBOM}",
+              "sbomSha256": "${SBOM_DIGEST}",
+              "sbomFormat": "CycloneDX 1.6 JSON",
+              "sbomPredicateType": "https://cyclonedx.org/bom",
+              "sbomScope": "core/requirements.txt (hash-locked runtime dependencies)",
+              "sbomComponents": len(json.load(open("sbom/${SBOM}", encoding="utf-8"))["components"])
           }
 
           with open("dist/release-manifest.json", "w", encoding="utf-8") as f:
@@ -400,9 +504,11 @@ jobs:
       - provenance
       - reproducibility
       - slsa3-build
+      - sbom
       - release-policy
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
       id-token: write
@@ -425,6 +531,12 @@ jobs:
         with:
           name: rightsframes-release-evidence-${{ github.sha }}
           path: dist
+
+      - name: Download SBOM
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: rightsframes-sbom-${{ github.sha }}
+          path: sbom
 
       - name: Final release integrity gate
         shell: bash
@@ -458,6 +570,12 @@ jobs:
           assert manifest["independentBuilds"] == 2
           assert manifest["slsaBuildLevel"] == 3
           assert manifest["signerWorkflow"] == f'{manifest["repository"]}/.github/workflows/provenance-gate.yml'
+
+          sbom = "sbom/RightsFrames-Termux-${GITHUB_REF_NAME}.cdx.json"
+          assert manifest["sbom"] == sbom.split("/", 1)[1]
+          assert manifest["sbomSha256"] == hashlib.sha256(open(sbom, "rb").read()).hexdigest()
+          assert manifest["sbomPredicateType"] == "https://cyclonedx.org/bom"
+          assert manifest["sbomComponents"] == len(json.load(open(sbom, encoding="utf-8"))["components"]) > 0
           PY
 
 
@@ -502,6 +620,38 @@ jobs:
             --deny-self-hosted-runners
           echo 'SLSA_BUILD_LEVEL=3_VERIFIED'
 
+      - name: Verify SBOM attestation before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ART="dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz"
+          SBOM="sbom/RightsFrames-Termux-${GITHUB_REF_NAME}.cdx.json"
+          gh attestation verify \
+            "$ART" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --predicate-type https://cyclonedx.org/bom \
+            --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/provenance-gate.yml" \
+            --source-ref "refs/tags/${GITHUB_REF_NAME}" \
+            --deny-self-hosted-runners \
+            --format json > "${RUNNER_TEMP}/sbom-attestation.json"
+          python3 - "${RUNNER_TEMP}/sbom-attestation.json" "$SBOM" <<'PY'
+          import json
+          import sys
+
+          results = json.load(open(sys.argv[1], encoding="utf-8"))
+          published = json.load(open(sys.argv[2], encoding="utf-8"))
+          predicates = [
+              item["verificationResult"]["statement"]["predicate"]
+              for item in results
+              if item["verificationResult"]["statement"]["predicateType"] == "https://cyclonedx.org/bom"
+          ]
+          assert predicates, "no verified SBOM attestation"
+          assert any(p == published for p in predicates), "published SBOM differs from the attested SBOM"
+          print("SBOM_ATTESTATION=VERIFIED")
+          PY
+
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -536,7 +686,8 @@ jobs:
             --generate-notes \
             "dist/RightsFrames-Termux-${GITHUB_REF_NAME}.tar.gz" \
             dist/SHA256SUMS \
-            dist/release-manifest.json
+            dist/release-manifest.json \
+            "sbom/RightsFrames-Termux-${GITHUB_REF_NAME}.cdx.json"
 
   release-policy:
     name: Release policy gate
@@ -549,8 +700,10 @@ jobs:
       - slsa3-build
       - provenance
       - zero-trust-policy
+      - sbom
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Require every security gate
         shell: bash
@@ -564,6 +717,7 @@ jobs:
           test "${{ needs.slsa3-build.result }}" = success
           test "${{ needs.provenance.result }}" = success
           test "${{ needs.zero-trust-policy.result }}" = success
+          test "${{ needs.sbom.result }}" = success
           test "${GITHUB_REF_TYPE}" = tag
 
           case "${GITHUB_REF_NAME}" in
@@ -583,6 +737,7 @@ jobs:
             'REPRODUCIBILITY=VERIFIED' \
             'SLSA_ATTESTATION=VERIFIED_BY_WORKFLOW' \
             'RELEASE_MANIFEST=VERIFIED' \
+            'SBOM=REPRODUCIBLE_AND_ATTESTED' \
             'RELEASE_PUBLICATION=AUTHORIZED' \
             "COMMIT=${GITHUB_SHA}" \
             "TAG=${GITHUB_REF_NAME}"

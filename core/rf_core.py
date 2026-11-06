@@ -636,12 +636,15 @@ def verify_anchors() -> tuple[bool, str]:
     previous_ledger_count = 0
     seen_pq = False
     pq_public: tuple[Any, str] | None = None
+    ledger_heads: list[str] = []
 
     for index, anchor in enumerate(anchors, 1):
         try:
             sequence = int(anchor['seq'])
             ledger_count = int(anchor['ledger_count'])
-            ledger_head = str(anchor['ledger_head'])
+            # Compared with the ledger entry it names once the signature
+            # chain is verified (below).
+            ledger_heads.append(str(anchor['ledger_head']))
             previous_hash = str(anchor['prev_anchor_hash'])
             anchor_hash = str(anchor['anchor_hash'])
             signature = base64.b64decode(
@@ -740,7 +743,7 @@ def verify_anchors() -> tuple[bool, str]:
                         )
                     stored_head = str(found[0])
                 if not secrets.compare_digest(
-                    stored_head, str(item['ledger_head'])
+                    stored_head, ledger_heads[index - 1]
                 ):
                     return (
                         False,

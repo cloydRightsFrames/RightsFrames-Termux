@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import json
 import subprocess
-import sys
 
 REPO = 'cloydRightsFrames/RightsFrames-Termux'
 RULESET_ID = 24306410

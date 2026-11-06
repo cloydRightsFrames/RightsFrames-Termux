@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.rf_core import (
     MAX_ENTRY_TYPE,
-    MAX_PAYLOAD_BYTES,
     append_entry,
     create_anchor,
     health,

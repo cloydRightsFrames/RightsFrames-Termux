@@ -19,6 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
@@ -59,3 +60,54 @@ jobs:
           assert not ok, 'TAMPER WAS NOT DETECTED -- this is a real security failure'
           print('All checks passed, tamper correctly detected')
           "
+
+  compat:
+    name: Python ${{ matrix.python }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            python: '3.13'
+          - os: ubuntu-24.04
+            python: '3.14'
+          - os: macos-15
+            python: '3.12'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      RF_DATA_DIR: ${{ github.workspace }}/ci_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            core/requirements.txt
+            core/requirements-test.txt
+      - name: Install hash-verified runtime and test dependencies
+        run: python -m pip install --require-hashes -r core/requirements.txt -r core/requirements-test.txt
+      - name: Validate dependency consistency
+        run: python -m pip check
+      - name: Run full test suite
+        run: python -m pytest -q
+
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install hash-locked ruff
+        run: python -m pip install --disable-pip-version-check --require-hashes -r .github/scripts/requirements-lint.txt
+      - name: Lint (correctness rules in ruff.toml)
+        run: ruff check --output-format=github .

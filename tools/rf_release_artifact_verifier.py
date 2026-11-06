@@ -4,11 +4,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import stat
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +20,7 @@ class VerificationFailure(Exception):
 
 
 def fail(code: str, detail: str) -> None:
-    print(f'RELEASE_ARTIFACT_VERIFICATION=FAIL')
+    print('RELEASE_ARTIFACT_VERIFICATION=FAIL')
     print(f'FAILURE_CODE={code}')
     print(f'FAILURE_DETAIL={detail}')
     raise SystemExit(1)

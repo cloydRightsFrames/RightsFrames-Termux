@@ -1,0 +1,16 @@
+# Code owners are requested for review automatically. main is protected by
+# the "RightsFrames Source L4 Two-Party Review" ruleset: two approvals, the
+# last push approved by someone other than its author, every required check
+# green and up to date with main.
+*                       @cloydRightsFrames
+
+# Security-critical paths: ledger, signatures, anchors, verifiers, release
+# and supply-chain controls. Both reviewers are requested on every change.
+/core/                  @cloydRightsFrames @charlieloydrightsframes2027 @JessicaGypsy
+/verifier/              @cloydRightsFrames @charlieloydrightsframes2027 @JessicaGypsy
+/tools/                 @cloydRightsFrames @charlieloydrightsframes2027 @JessicaGypsy
+/enterprise/            @cloydRightsFrames @charlieloydrightsframes2027 @JessicaGypsy
+/pins/                  @cloydRightsFrames @charlieloydrightsframes2027 @JessicaGypsy
+/provenance/            @cloydRightsFrames @charlieloydrightsframes2027 @JessicaGypsy
+/.github/               @cloydRightsFrames @charlieloydrightsframes2027 @JessicaGypsy
+/SECURITY.md            @cloydRightsFrames @charlieloydrightsframes2027 @JessicaGypsy

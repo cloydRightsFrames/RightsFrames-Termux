@@ -20,6 +20,7 @@ jobs:
   build:
     name: Hardened deterministic release build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       digest: ${{ steps.digest.outputs.sha256 }}
       commit: ${{ steps.identity.outputs.commit }}

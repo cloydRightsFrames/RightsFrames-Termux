@@ -10,5 +10,14 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - rf_data:/data
+    # Runtime hardening, verified in CI (.github/workflows/container.yml):
+    # read-only root filesystem, no Linux capabilities, no privilege gain.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 volumes:
   rf_data:

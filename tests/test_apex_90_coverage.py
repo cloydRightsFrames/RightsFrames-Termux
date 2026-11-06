@@ -4,8 +4,6 @@ import asyncio
 import json
 import runpy
 import sys
-from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from starlette.requests import Request

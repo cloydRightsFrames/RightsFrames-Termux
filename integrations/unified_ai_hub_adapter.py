@@ -34,7 +34,7 @@ def _request(path,method="GET",payload=None):
         if e.code in (401,403): raise HTTPException(502,"UnifiedAIHub service authentication or authorization failed") from None
         if e.code==404: raise HTTPException(404,"UnifiedAIHub resource not found") from None
         raise HTTPException(502,"UnifiedAIHub request failed with HTTP "+str(e.code)) from None
-    except (urllib.error.URLError,TimeoutError,OSError,ValueError) as e:
+    except (urllib.error.URLError,TimeoutError,OSError,ValueError):
         raise HTTPException(503,"UnifiedAIHub unavailable or returned invalid JSON") from None
 class SearchInput(BaseModel):
     query: str = Field(min_length=1,max_length=2000)

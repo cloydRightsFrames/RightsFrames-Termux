@@ -22,8 +22,8 @@ From a clean machine with Git, GitHub CLI, Python 3, and sha256sum:
 ```bash
 git clone https://github.com/cloydRightsFrames/RightsFrames-Termux.git
 cd RightsFrames-Termux
-git show v0.1.3:tools/verify_release_external.sh
-bash tools/verify_release_external.sh v0.1.3
+git show v0.3.0:tools/verify_release_external.sh
+bash tools/verify_release_external.sh v0.3.0
 ```
 
 Replace the tag with the release being examined.
@@ -40,15 +40,45 @@ The verifier performs all of these checks:
 8. SLSA Provenance v1 attestation verification.
 9. Exact signer workflow identity verification.
 10. Rejection of self-hosted runners.
+11. From v0.3.0: the release SBOM (`RightsFrames-Termux-<tag>.cdx.json`) matches the
+    digest in the release manifest, lists exactly the packages, versions and SHA-256
+    hashes locked in the tag's `core/requirements.txt` (checked by the tag's own
+    `tools/rf_release_sbom.py`), and is byte-for-byte the predicate of a CycloneDX
+    attestation signed by `provenance-gate.yml` for the release artifact. A release from
+    v0.3.0 on without an SBOM fails verification.
+
+## Release SBOM
+
+Each release from v0.3.0 publishes a CycloneDX 1.6 SBOM of the hash-locked runtime
+dependencies. It is reproducible: CI generates it twice and requires identical bytes;
+the timestamp is the tagged commit's time and the serial number is derived from the
+repository, commit and version. To check one by hand:
+
+```bash
+TAG=v0.3.0
+gh release download "$TAG" -R cloydRightsFrames/RightsFrames-Termux \
+  -p "RightsFrames-Termux-$TAG.tar.gz" -p "RightsFrames-Termux-$TAG.cdx.json"
+tar -xzf "RightsFrames-Termux-$TAG.tar.gz"
+python3 "RightsFrames-Termux-$TAG/tools/rf_release_sbom.py" verify \
+  --sbom "RightsFrames-Termux-$TAG.cdx.json" \
+  --requirements "RightsFrames-Termux-$TAG/core/requirements.txt" --version "${TAG#v}"
+gh attestation verify "RightsFrames-Termux-$TAG.tar.gz" -R cloydRightsFrames/RightsFrames-Termux \
+  --predicate-type https://cyclonedx.org/bom \
+  --signer-workflow cloydRightsFrames/RightsFrames-Termux/.github/workflows/provenance-gate.yml \
+  --source-ref "refs/tags/$TAG" --deny-self-hosted-runners
+```
+
+The SBOM can be imported into dependency-tracking tools (for example OWASP
+Dependency-Track) to watch the release for newly published vulnerabilities.
 
 ## Offline attestation verification
 
 GitHub CLI can also download the attestation bundle and trusted roots for offline verification:
 
 ```bash
-gh attestation download ./RightsFrames-Termux-v0.1.3.tar.gz -R cloydRightsFrames/RightsFrames-Termux
+gh attestation download ./RightsFrames-Termux-v0.3.0.tar.gz -R cloydRightsFrames/RightsFrames-Termux
 gh attestation trusted-root > trusted_root.jsonl
-gh attestation verify ./RightsFrames-Termux-v0.1.3.tar.gz   -R cloydRightsFrames/RightsFrames-Termux   --bundle sha256:<artifact-digest>.jsonl   --custom-trusted-root trusted_root.jsonl   --signer-workflow cloydRightsFrames/RightsFrames-Termux/.github/workflows/slsa-build-l3.yml
+gh attestation verify ./RightsFrames-Termux-v0.3.0.tar.gz   -R cloydRightsFrames/RightsFrames-Termux   --bundle sha256:<artifact-digest>.jsonl   --custom-trusted-root trusted_root.jsonl   --signer-workflow cloydRightsFrames/RightsFrames-Termux/.github/workflows/slsa-build-l3.yml
 ```
 
 The trusted-root file should be obtained from a trusted online environment immediately before importing signed material into an offline environment.

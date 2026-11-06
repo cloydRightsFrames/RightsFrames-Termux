@@ -23,6 +23,7 @@ jobs:
   verify:
     name: Independent release verifier
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout verifier
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -183,3 +184,77 @@ jobs:
             "TAG_TARGET=$REMOTE_TAG_TARGET" \
             "ARTIFACT=$(sha256sum "$ART" | awk '{print $1}')" \
             'SLSA_ATTESTATION=PASS'
+
+
+      - name: Verify the release SBOM, its manifest binding and its attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="$(cat "${RUNNER_TEMP}/rightsframes-release-tag")"
+          REPO="${GITHUB_REPOSITORY}"
+          TMP="${RUNNER_TEMP}/rightsframes-release"
+          ART="$TMP/RightsFrames-Termux-$TAG.tar.gz"
+          SBOM_NAME="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("sbom", ""))' "$TMP/release-manifest.json")"
+
+          if [ -z "$SBOM_NAME" ]; then
+            python3 - "$TAG" <<'PY'
+          import re
+          import sys
+
+          match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", sys.argv[1])
+          assert match and tuple(map(int, match.groups())) < (0, 3, 0), "releases from v0.3.0 on must publish an SBOM"
+          print("SBOM=NOT_PUBLISHED_BEFORE_V0_3_0")
+          PY
+            exit 0
+          fi
+
+          test "$SBOM_NAME" = "RightsFrames-Termux-$TAG.cdx.json"
+          gh release download "$TAG" --repo "$REPO" --pattern "$SBOM_NAME" --dir "$TMP"
+          SBOM="$TMP/$SBOM_NAME"
+          test -s "$SBOM"
+
+          python3 - "$TMP/release-manifest.json" "$SBOM" <<'PY'
+          import hashlib
+          import json
+          import sys
+
+          manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+          assert manifest["sbomSha256"] == hashlib.sha256(open(sys.argv[2], "rb").read()).hexdigest()
+          assert manifest["sbomPredicateType"] == "https://cyclonedx.org/bom"
+          print("MANIFEST_TO_SBOM=PASS")
+          PY
+
+          mkdir -p "$TMP/source"
+          tar -xzf "$ART" -C "$TMP/source"
+          python3 tools/rf_release_sbom.py verify \
+            --sbom "$SBOM" \
+            --requirements "$TMP/source/RightsFrames-Termux-$TAG/core/requirements.txt" \
+            --version "${TAG#v}"
+
+          gh attestation verify \
+            "$ART" \
+            --repo "$REPO" \
+            --predicate-type https://cyclonedx.org/bom \
+            --signer-workflow "${REPO}/.github/workflows/provenance-gate.yml" \
+            --source-ref "refs/tags/$TAG" \
+            --deny-self-hosted-runners \
+            --format json > "$TMP/sbom-attestation.json"
+
+          python3 - "$TMP/sbom-attestation.json" "$SBOM" <<'PY'
+          import json
+          import sys
+
+          results = json.load(open(sys.argv[1], encoding="utf-8"))
+          published = json.load(open(sys.argv[2], encoding="utf-8"))
+          predicates = [
+              item["verificationResult"]["statement"]["predicate"]
+              for item in results
+              if item["verificationResult"]["statement"]["predicateType"] == "https://cyclonedx.org/bom"
+          ]
+          assert predicates, "no verified SBOM attestation"
+          assert any(p == published for p in predicates), "published SBOM differs from the attested SBOM"
+          print("SBOM_ATTESTATION=PASS")
+          PY

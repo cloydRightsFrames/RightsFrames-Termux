@@ -1,0 +1,6 @@
+# CycloneDX SBOM generator for release SBOMs (tools/rf_release_sbom.py).
+# requirements-sbom.txt is generated from this file:
+#
+#   uv pip compile .github/scripts/requirements-sbom.in --universal --generate-hashes \
+#     --python-version 3.12 -o .github/scripts/requirements-sbom.txt
+cyclonedx-bom==7.6.0
