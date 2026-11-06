@@ -1,0 +1,54 @@
+name: Bug report
+description: Something does not work as documented (not a security vulnerability).
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security vulnerabilities must not be reported here. If tampered evidence, a forged signature,
+        a rewritten history or a downgraded anchor can pass verification, follow SECURITY.md instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of commands that shows the problem.
+      render: shell
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Release or commit
+      description: For example v0.3.0, or the output of `git rev-parse HEAD`.
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Android (Termux)
+        - Docker (core/docker-compose.yml)
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Output and logs
+      description: Paste the full output. Remove API keys and private keys first.
+      render: text

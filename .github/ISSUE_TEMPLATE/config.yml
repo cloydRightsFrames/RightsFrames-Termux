@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/cloydRightsFrames/RightsFrames-Termux/blob/main/SECURITY.md
+    about: Never open a public issue for a flaw that lets tampered evidence pass verification. Follow SECURITY.md instead.
