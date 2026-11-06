@@ -1,0 +1,6 @@
+# Ruff linter used by the "Lint" job (rules in ruff.toml).
+# requirements-lint.txt is generated from this file:
+#
+#   uv pip compile .github/scripts/requirements-lint.in --universal --generate-hashes \
+#     --python-version 3.12 -o .github/scripts/requirements-lint.txt
+ruff==0.17.3

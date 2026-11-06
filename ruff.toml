@@ -1,0 +1,9 @@
+# Ruff configuration for the "Lint (ruff)" CI job.
+# The gate covers correctness only: syntax errors (E9) and pyflakes (F):
+# undefined names, unused imports and variables, redefinitions, broken
+# f-strings. Style rules are deliberately not enforced.
+target-version = "py312"
+extend-exclude = ["artifacts", "ci_test"]
+
+[lint]
+select = ["E9", "F"]

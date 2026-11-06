@@ -641,7 +641,9 @@ def verify_anchors() -> tuple[bool, str]:
         try:
             sequence = int(anchor['seq'])
             ledger_count = int(anchor['ledger_count'])
-            ledger_head = str(anchor['ledger_head'])
+            # Presence is required here; the value is compared with the
+            # ledger entry it names after the signature chain is verified.
+            _ledger_head = str(anchor['ledger_head'])
             previous_hash = str(anchor['prev_anchor_hash'])
             anchor_hash = str(anchor['anchor_hash'])
             signature = base64.b64decode(

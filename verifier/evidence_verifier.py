@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from core.evidence.envelope import canonical_bytes, verify_envelope
+from core.evidence.envelope import verify_envelope
 from core.evidence.ledger import LedgerRecord, verify_chain
 from core.evidence.merkle import MerkleProof, verify_proof
 from core.evidence.signing import verify as verify_signature

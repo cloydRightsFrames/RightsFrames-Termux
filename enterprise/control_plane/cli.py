@@ -49,8 +49,33 @@ def _git_clean() -> bool:
         raise OSError("git unavailable")
 
 
+def _immutable_reference(value: str) -> bool:
+    """True if one `uses:` value cannot change after it was reviewed.
+
+    * ``owner/repo[/path]@<40-hex commit SHA>`` - an exact commit.
+    * ``./path`` - a local action or reusable workflow; GitHub resolves it
+      from the same commit as the calling workflow, so it is pinned by the
+      commit being verified.
+    * ``docker://image@sha256:<64 hex>`` - an exact image digest.
+
+    Anything else (a branch, a tag, a short SHA, a docker tag) can move.
+    """
+    value = value.split("#", 1)[0].strip().strip("'\"")
+    if value.startswith("./"):
+        return len(value) > 2 and "@" not in value
+    if value.startswith("docker://"):
+        image, sep, digest = value.rpartition("@sha256:")
+        return bool(sep) and len(image) > len("docker://") and len(digest) == 64 and all(
+            c in _HEX for c in digest
+        )
+    action, sep, ref = value.partition("@")
+    if not sep or not action or "@" in ref:
+        return False
+    return len(ref) == 40 and all(c in _HEX for c in ref)
+
+
 def _workflow_actions_immutable() -> bool:
-    """True only if every `uses:` in every workflow is pinned to a full 40-hex commit SHA."""
+    """True only if every `uses:` in every workflow is immutable (see _immutable_reference)."""
     workflow_dir = Path(".github") / "workflows"
     if not workflow_dir.exists():
         return False
@@ -63,11 +88,7 @@ def _workflow_actions_immutable() -> bool:
                     stripped = stripped[2:].strip()
                 if not stripped.startswith("uses:"):
                     continue
-                parts = stripped.split("uses:", 1)[1].strip().split("@")
-                if len(parts) < 2:
-                    return False
-                ref = parts[1].split("#", 1)[0].strip()
-                if len(ref) != 40 or not all(c in _HEX for c in ref):
+                if not _immutable_reference(stripped.split("uses:", 1)[1]):
                     return False
         return True
     except Exception:
@@ -112,8 +133,7 @@ def _readiness(policy_path) -> int:
                 "policy": lambda: load_policy(policy_path)["mode"],
             }
         )
-        payload = dict(result) if isinstance(result, dict) else {"allowed": result["allowed"]} if args.command == "evaluate" and hasattr(result, "__getitem__") else result
-        print(json.dumps(payload, sort_keys=True, indent=2, default=str))
+        print(json.dumps(dict(result), sort_keys=True, indent=2, default=str))
         return 0 if result["ready"] else 1
     except Exception as exc:
         print(json.dumps({"ready": False, "error": str(exc)}, sort_keys=True), file=sys.stdout)

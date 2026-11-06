@@ -115,7 +115,6 @@ def test_cli_main_unsupported():
             cli.main()
 
 import asyncio
-from types import SimpleNamespace
 
 from starlette.responses import Response
 
@@ -787,3 +786,48 @@ def test_verifier_module_main_guard():
             )
 
     assert isinstance(exc.value.code, int)
+
+
+def _write_workflow(tmp_path, body):
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "test.yml").write_text(body)
+
+
+def test_cli_workflow_immutable_accepts_local_reusable_workflow(tmp_path, monkeypatch):
+    _write_workflow(
+        tmp_path,
+        "jobs:\n"
+        "  build:\n"
+        "    uses: ./.github/workflows/slsa-build-l3.yml\n"
+        "  test:\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n",
+    )
+    monkeypatch.chdir(tmp_path)
+    assert cli._workflow_actions_immutable() is True
+
+
+def test_cli_workflow_immutable_rejects_local_reference_with_ref(tmp_path, monkeypatch):
+    _write_workflow(tmp_path, "uses: ./.github/workflows/x.yml@main\n")
+    monkeypatch.chdir(tmp_path)
+    assert cli._workflow_actions_immutable() is False
+
+
+def test_cli_workflow_immutable_docker_requires_digest(tmp_path, monkeypatch):
+    _write_workflow(tmp_path, "uses: docker://alpine@sha256:" + "a" * 64 + "\n")
+    monkeypatch.chdir(tmp_path)
+    assert cli._workflow_actions_immutable() is True
+    (tmp_path / ".github" / "workflows" / "test.yml").write_text("uses: docker://alpine:3.20\n")
+    assert cli._workflow_actions_immutable() is False
+
+
+def test_cli_workflow_immutable_rejects_double_at(tmp_path, monkeypatch):
+    _write_workflow(tmp_path, "uses: actions/checkout@" + "a" * 40 + "@x\n")
+    monkeypatch.chdir(tmp_path)
+    assert cli._workflow_actions_immutable() is False
+
+
+def test_cli_workflow_immutable_holds_for_this_repository(monkeypatch):
+    monkeypatch.chdir(Path(__file__).resolve().parents[1])
+    assert cli._workflow_actions_immutable() is True
