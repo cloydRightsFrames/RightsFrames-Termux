@@ -70,7 +70,7 @@ someone other than its author) and these checks, all enforced in CI:
 |---|---|
 | Full test suite on Linux and Windows (Python 3.12), plus Python 3.13 and 3.14 on Linux and 3.12 on macOS | `verify.yml` |
 | Lint gate for correctness (pyflakes rules, syntax errors) | `verify.yml`, `ruff.toml` |
-| CodeQL, Semgrep, OWASP Dependency-Check, Trivy filesystem scan, TruffleHog and GitGuardian secret scanning | `codeql-advanced.yml` |
+| CodeQL, Semgrep, OWASP Dependency-Check, pip-audit of every lock file (runtime, tests, CI tools), Trivy filesystem scan, TruffleHog and GitGuardian secret scanning | `codeql-advanced.yml` |
 | Container built as documented, run read-only, non-root, with no Linux capabilities, auth and restart durability tested, image scanned by Trivy | `container.yml` |
 | Supply-chain policy as code: every action pinned to a commit SHA, every `pip install` hash-locked, least-privilege `permissions`, a timeout on every job, no `pull_request_target`, release controls present | `tools/verify_supply_chain_policy.py` |
 | Release: annotated tag, two independent builds that must match byte for byte, SLSA Build L3 provenance, a reproducible CycloneDX SBOM attested to the release artifact, and an hourly re-verification of the latest release | `provenance-gate.yml`, `continuous-release-integrity.yml` |

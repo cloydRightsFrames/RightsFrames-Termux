@@ -109,6 +109,34 @@ jobs:
         with:
           sarif_file: "trivy-results.sarif"
           category: "trivy"
+  dependency-audit:
+    name: "Dependency audit (pip-audit)"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install hash-locked pip-audit
+        run: python -m pip install --disable-pip-version-check --require-hashes -r .github/scripts/requirements-audit.txt
+      - name: Audit every hash-locked requirements file (runtime, tests and CI tools)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t LOCKS < <(git ls-files 'core/requirements*.txt' '.github/scripts/requirements-*.txt' '.github/scripts/*/requirements.txt')
+          test "${#LOCKS[@]}" -ge 7
+          STATUS=0
+          for LOCK in "${LOCKS[@]}"; do
+            echo "::group::${LOCK}"
+            pip-audit --strict --disable-pip --require-hashes --progress-spinner off --desc on -r "${LOCK}" || STATUS=1
+            echo "::endgroup::"
+          done
+          exit "${STATUS}"
   semgrep-scan:
     name: "Semgrep SAST Analysis"
     runs-on: ubuntu-latest
@@ -124,7 +152,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install hash-locked Semgrep CLI
-        run: python -m pip install --disable-pip-version-check --require-hashes -r .github/scripts/requirements-semgrep.txt
+        # The lock overrides pins with published advisories (see
+        # .github/scripts/semgrep/requirements.in); --no-deps installs exactly it.
+        run: python -m pip install --disable-pip-version-check --no-deps --require-hashes -r .github/scripts/semgrep/requirements.txt
 
       - name: Run Semgrep security rules
         run: >-

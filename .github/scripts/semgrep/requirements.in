@@ -1,0 +1,16 @@
+# Semgrep SAST CLI used by the "Semgrep SAST Analysis" job.
+#
+# Every semgrep release pins mcp==1.29.0 and opentelemetry ~=1.37.0, which
+# have published advisories (mcp: fixed in 1.30.0; opentelemetry-api
+# CVE-2026-114603: fixed in 1.45.1). The scan never runs Semgrep's MCP server
+# or parses inbound trace headers, but the lock must not carry a
+# known-vulnerable package, so overrides.txt lifts them to fixed versions and
+# the job installs this lock with --no-deps (every transitive dependency is
+# pinned and hashed here). The scan runs in CI with these versions. The lock
+# lives outside the Dependabot-managed .github/scripts directory because
+# Dependabot would regenerate it without the overrides; the "Dependency
+# audit" job audits it on every change.
+#
+# requirements.txt is generated from this file with the command in its
+# header; set --exclude-newer to 7 days ago (the Dependabot cooldown).
+semgrep==1.179.0

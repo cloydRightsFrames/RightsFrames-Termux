@@ -37,7 +37,14 @@ wheels), so the same file installs on Linux, Windows, macOS and Termux:
 
 The CI tool locks live in `.github/scripts/requirements-*.in` and are
 regenerated the same way. Prefer versions published at least 7 days ago,
-matching the Dependabot cooldown.
+matching the Dependabot cooldown (`uv pip compile --exclude-newer <date>`).
+The Semgrep lock is in `.github/scripts/semgrep/`: Semgrep pins packages
+that have published advisories, so its lock overrides them
+(`overrides.txt`), is installed with `--no-deps`, and is kept out of
+Dependabot's directory so an update cannot silently drop the overrides.
+
+Every lock file (runtime, tests and CI tools) is audited by the
+"Dependency audit (pip-audit)" job on every change and weekly.
 
 ## Workflows
 

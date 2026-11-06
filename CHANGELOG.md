@@ -22,6 +22,8 @@ every release is an annotated tag built, reproduced and attested by
 - Python 3.13 and 3.14 on Linux and Python 3.12 on macOS in CI, in addition to
   3.12 on Linux and Windows.
 - Lint gate (`ruff`, correctness rules only) with a hash-locked ruff.
+- Dependency audit: `pip-audit` (hash-locked) checks every requirements lock in the
+  repository, runtime, tests and CI tools, on every change and weekly.
 - OpenSSF Scorecard workflow with a published badge.
 - `CODEOWNERS`, pull request template and issue forms; `SECURITY.md` now states
   supported versions, response timelines and coordinated disclosure.
@@ -49,6 +51,10 @@ every release is an annotated tag built, reproduced and attested by
   recognised as immutable; CI now runs `evaluate`, so a regression fails the build.
 - Removed an unreachable expression in the control-plane `readiness` command that
   referenced an undefined name, and unused imports across the tools and tests.
+- The Semgrep CLI lock carried mcp 1.29.0 (four advisories, fixed in 1.30.0) and
+  opentelemetry-api 1.37.0 (CVE-2026-114603, fixed in 1.45.1), pinned by every Semgrep
+  release. The lock now overrides them to fixed versions and is installed with
+  `--no-deps`; the scan was re-verified with them.
 - `verify_anchors` now compares each ledger entry with the anchor head it parsed
   instead of parsing the head, discarding it and reading it again.
 
