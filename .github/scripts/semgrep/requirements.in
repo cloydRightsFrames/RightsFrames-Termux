@@ -13,4 +13,6 @@
 #
 # requirements.txt is generated from this file with the command in its
 # header; set --exclude-newer to 7 days ago (the Dependabot cooldown).
+# --no-annotate keeps uv's "# via --override ..." comment lines out of the
+# lock: OWASP Dependency-Check parses them as a package.
 semgrep==1.179.0
