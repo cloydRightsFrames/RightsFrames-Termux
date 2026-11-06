@@ -7,9 +7,10 @@
 # known-vulnerable package, so overrides.txt lifts them to fixed versions and
 # the job installs this lock with --no-deps (every transitive dependency is
 # pinned and hashed here). The scan runs in CI with these versions. The lock
-# lives outside the Dependabot-managed .github/scripts directory because
-# Dependabot would regenerate it without the overrides; the "Dependency
-# audit" job audits it on every change.
+# lives outside the Dependabot-managed .github/scripts tree (Dependabot also
+# reads its subdirectories) because Dependabot regenerates locks without the
+# overrides and fails on them; the "Dependency audit" job audits this lock on
+# every change and weekly.
 #
 # requirements.txt is generated from this file with the command in its
 # header; set --exclude-newer to 7 days ago (the Dependabot cooldown).
