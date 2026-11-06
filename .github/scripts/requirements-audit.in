@@ -1,0 +1,7 @@
+# pip-audit for the "Dependency audit" job: audits every hash-locked
+# requirements file in the repository against the PyPI advisory database.
+# requirements-audit.txt is generated from this file:
+#
+#   uv pip compile .github/scripts/requirements-audit.in --universal --generate-hashes \
+#     --python-version 3.12 -o .github/scripts/requirements-audit.txt
+pip-audit==2.10.1

@@ -108,6 +108,25 @@ class OwaspEvidenceTests(unittest.TestCase):
             self.assertEqual((root / e.LOCKS[0]).read_text(), runtime)
             self.assertEqual((root / e.LOCKS[1]).read_text(), tests)
 
+    def test_ci_tool_locks_left_out_of_scanner_copy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            snapshot = Path(folder)
+            tools = snapshot / ".github" / "scripts"
+            (tools / "semgrep").mkdir(parents=True)
+            (tools / "requirements-lint.txt").write_text("ruff==0.17.3 \\\n    --hash=sha256:" + "c" * 64 + "\n")
+            (tools / "requirements-lint.in").write_text("ruff==0.17.3\n")
+            (tools / "semgrep" / "requirements.txt").write_text("semgrep==1.179.0\n")
+            (tools / "validate-dependabot.sh").write_text("#!/bin/sh\n")
+            (snapshot / "core").mkdir()
+            (snapshot / e.LOCKS[0]).write_text("httpx==0.28.1\n")
+            removed = e.exclude_ci_tool_locks(snapshot)
+            self.assertEqual(removed, [".github/scripts/requirements-lint.txt",
+                                       ".github/scripts/semgrep/requirements.txt"])
+            self.assertTrue((tools / "requirements-lint.in").is_file())
+            self.assertTrue((tools / "validate-dependabot.sh").is_file())
+            self.assertTrue((snapshot / e.LOCKS[0]).is_file())
+            self.assertEqual(e.exclude_ci_tool_locks(snapshot), [])
+
     def test_unhashed_requirement_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

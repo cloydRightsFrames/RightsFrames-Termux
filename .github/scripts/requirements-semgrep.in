@@ -1,6 +1,0 @@
-# Semgrep SAST CLI used by the "Semgrep SAST Analysis" job.
-# requirements-semgrep.txt is generated from this file:
-#
-#   uv pip compile .github/scripts/requirements-semgrep.in --universal --generate-hashes \
-#     --python-version 3.12 -o .github/scripts/requirements-semgrep.txt
-semgrep==1.179.0
