@@ -76,7 +76,7 @@ jobs:
           category: dependency-check
       - name: Retain original reports and freshness evidence
         if: always() && hashFiles('reports/owasp/**') != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: owasp-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           path: reports/owasp/
@@ -137,7 +137,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: trufflesecurity/trufflehog@e63326d6545de8f425d93ce24078c6e68d83f70e
+      - uses: trufflesecurity/trufflehog@31ce31ee1abbcc7dc8eee5764c17121c3044c8b2
         with:
           path: ./
           extra_args: --debug
