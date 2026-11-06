@@ -13,6 +13,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Apply Debian security fixes published after the pinned base image was
+# built, so the image never ships an OS package with a known, already-fixed
+# vulnerability (enforced by the Trivy image gate in container.yml). The base
+# digest itself is refreshed by Dependabot.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY core/requirements.txt /tmp/requirements.txt
 
 # Install the hash-locked runtime set, then remove pip itself: the running
