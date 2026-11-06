@@ -16,9 +16,9 @@ every release is an annotated tag built, reproduced and attested by
   `tools/verify_release_external.sh`. New tool: `tools/rf_release_sbom.py`.
 - Container verification (`container.yml`): builds and starts the API with
   `docker compose` exactly as documented, proves it is healthy, non-root, read-only,
-  capability-free and `no-new-privileges`, that writes require the API key, and that
-  the ledger survives a restart; then scans the image with Trivy (CRITICAL/HIGH,
-  fixed vulnerabilities fail the build).
+  capability-free and `no-new-privileges`, that writes require the API key, that
+  the ledger survives a restart and that pip is absent; then scans the image with
+  Trivy (fixed CRITICAL/HIGH vulnerabilities fail the build).
 - Python 3.13 and 3.14 on Linux and Python 3.12 on macOS in CI, in addition to
   3.12 on Linux and Windows.
 - Lint gate (`ruff`, correctness rules only) with a hash-locked ruff.
@@ -34,7 +34,9 @@ every release is an annotated tag built, reproduced and attested by
   takes `--root` and is covered by tests.
 - Semgrep is installed from a hash-locked file; CodeQL uses the toolchain bundled
   with the pinned action instead of "latest"; every checkout drops its credentials.
-- Docker image: pip is removed after installing the locked runtime set;
+- Docker image: Debian security updates are applied on top of the pinned base at
+  build time (the first image scan found fixed HIGH vulnerabilities in apt and pcre2
+  in the pinned base), and pip is removed after installing the locked runtime set;
   `docker-compose.yml` runs the service read-only, with all capabilities dropped and
   `no-new-privileges`.
 - Dependabot: valid conventional commit prefixes, reviewers from `CODEOWNERS`, and
@@ -47,6 +49,8 @@ every release is an annotated tag built, reproduced and attested by
   recognised as immutable; CI now runs `evaluate`, so a regression fails the build.
 - Removed an unreachable expression in the control-plane `readiness` command that
   referenced an undefined name, and unused imports across the tools and tests.
+- `verify_anchors` now compares each ledger entry with the anchor head it parsed
+  instead of parsing the head, discarding it and reading it again.
 
 ## Earlier releases
 

@@ -56,7 +56,7 @@ The compose file builds from the repository root (the API needs `core/` and
 Writes require `X-API-Key: $RF_API_KEY`. The container runs as a non-root
 user with a read-only root filesystem, no Linux capabilities and
 `no-new-privileges`; the ledger and keys live in the `rf_data` volume. The
-image contains no package manager.
+image applies Debian security updates at build time and ships without pip.
 
 Supported Python versions: 3.12, 3.13 and 3.14 (tested in CI on Linux,
 plus 3.12 on Windows and macOS).

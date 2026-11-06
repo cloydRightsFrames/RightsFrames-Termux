@@ -3,7 +3,8 @@ name: Container Verification
 # Builds and starts the API exactly as the README Quick Start does
 # (docker compose from core/), proves the running container is healthy,
 # non-root, read-only, capability-free and enforcing authentication,
-# that the ledger survives a restart, then scans the built image.
+# that the ledger survives a restart and that pip is absent, then scans
+# the built image.
 
 on:
   push:
@@ -60,7 +61,7 @@ jobs:
             echo 'ROOT_FILESYSTEM_WRITABLE'; exit 1
           fi
           if docker exec "${CID}" python -c 'import pip' 2>/dev/null; then
-            echo 'PACKAGE_MANAGER_PRESENT_IN_RUNTIME_IMAGE'; exit 1
+            echo 'PIP_PRESENT_IN_RUNTIME_IMAGE'; exit 1
           fi
           echo "RF_IMAGE=$(docker inspect -f '{{.Config.Image}}' "${CID}")" >> "${GITHUB_ENV}"
 
