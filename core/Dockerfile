@@ -15,8 +15,11 @@ WORKDIR /app
 
 COPY core/requirements.txt /tmp/requirements.txt
 
+# Install the hash-locked runtime set, then remove pip itself: the running
+# service never installs anything, so the image ships no package manager.
 RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt && \
-    rm -f /tmp/requirements.txt
+    rm -f /tmp/requirements.txt && \
+    python -m pip uninstall --yes pip
 
 COPY core/ /app/core/
 COPY tools/rf_export_evidence.py /app/tools/rf_export_evidence.py

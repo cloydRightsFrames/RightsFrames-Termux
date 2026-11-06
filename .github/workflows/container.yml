@@ -1,0 +1,117 @@
+name: Container Verification
+
+# Builds and starts the API exactly as the README Quick Start does
+# (docker compose from core/), proves the running container is healthy,
+# non-root, read-only, capability-free and enforcing authentication,
+# that the ledger survives a restart, then scans the built image.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rightsframes-container-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Container build, runtime hardening and image scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      COMPOSE_PROJECT_NAME: rfci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Build and start the stack as documented
+        shell: bash
+        run: |
+          set -euo pipefail
+          RF_API_KEY="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+          echo "::add-mask::${RF_API_KEY}"
+          echo "RF_API_KEY=${RF_API_KEY}" >> "${GITHUB_ENV}"
+          cd core
+          RF_API_KEY="${RF_API_KEY}" docker compose up --build --detach --wait --wait-timeout 180
+
+      - name: Prove the container is healthy, hardened and enforcing auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd core
+          CID="$(docker compose ps -q rightsframes-core)"
+          test -n "${CID}"
+          test "$(docker inspect -f '{{.State.Health.Status}}' "${CID}")" = healthy
+          test "$(docker exec "${CID}" id -u)" = 10001
+          test "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "${CID}")" = true
+          docker inspect -f '{{json .HostConfig.CapDrop}}' "${CID}" | grep -q '"ALL"'
+          docker inspect -f '{{json .HostConfig.SecurityOpt}}' "${CID}" | grep -q 'no-new-privileges'
+          if docker exec "${CID}" sh -c 'touch /app/write-test' 2>/dev/null; then
+            echo 'ROOT_FILESYSTEM_WRITABLE'; exit 1
+          fi
+          if docker exec "${CID}" python -c 'import pip' 2>/dev/null; then
+            echo 'PACKAGE_MANAGER_PRESENT_IN_RUNTIME_IMAGE'; exit 1
+          fi
+          echo "RF_IMAGE=$(docker inspect -f '{{.Config.Image}}' "${CID}")" >> "${GITHUB_ENV}"
+
+          BASE=http://127.0.0.1:8000
+          BODY='{"entry_type":"ci.container","payload":{"msg":"container verification"}}'
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE}/entries" -H 'Content-Type: application/json' -d "${BODY}")"
+          test "${CODE}" = 401
+          CODE="$(curl -s -o /dev/null -w '%{http_code}' -X POST "${BASE}/entries" -H 'Content-Type: application/json' -H 'X-API-Key: wrong' -d "${BODY}")"
+          test "${CODE}" = 401
+          curl -fsS -X POST "${BASE}/entries" -H 'Content-Type: application/json' -H "X-API-Key: ${RF_API_KEY}" -d "${BODY}" >/dev/null
+          curl -fsS -X POST "${BASE}/anchor" -H "X-API-Key: ${RF_API_KEY}" >/dev/null
+          curl -fsS "${BASE}/health" | python3 -c 'import json, sys; d = json.load(sys.stdin); assert d["status"] == "ok" and d["ledger_ok"] is True and d["anchors_ok"] is True, d'
+
+          docker compose restart rightsframes-core
+          for _ in $(seq 1 60); do
+            STATE="$(docker inspect -f '{{.State.Health.Status}}' "${CID}")"
+            [ "${STATE}" = healthy ] && break
+            sleep 2
+          done
+          test "${STATE}" = healthy
+          curl -fsS "${BASE}/health" | python3 -c 'import json, sys; d = json.load(sys.stdin); assert d["status"] == "ok" and d["ledger_ok"] is True and d["anchors_ok"] is True, d'
+          echo 'CONTAINER_RUNTIME_VERIFICATION=PASS'
+
+      - name: Scan the built image (OS packages and Python libraries)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+        with:
+          scan-type: image
+          image-ref: ${{ env.RF_IMAGE }}
+          format: sarif
+          output: trivy-image.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: Container logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          cd core
+          docker compose ps || true
+          docker compose logs --no-color || true
+
+      - name: Stop and remove the stack
+        if: always()
+        shell: bash
+        run: |
+          cd core
+          docker compose down --volumes || true
