@@ -18,7 +18,7 @@ jobs:
   analyze:
     name: "CodeQL Analysis - ${{ matrix.language }}"
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 360
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -31,12 +31,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          persist-credentials: false
       - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370
         with:
           languages: ${{ matrix.language }}
           queries: security-and-quality
           config-file: ./.github/codeql-config.yml
-          tools: latest
+          tools: linked
       - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370
         with:
           category: "/language:${{ matrix.language }}"
@@ -50,6 +51,8 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
           python-version: '3.12'
@@ -85,11 +88,14 @@ jobs:
   trivy-scan:
     name: "Trivy Container & IaC Scan"
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
         with:
           scan-type: "fs"
@@ -106,13 +112,19 @@ jobs:
   semgrep-scan:
     name: "Semgrep SAST Analysis"
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Install pinned Semgrep CLI
-        run: python -m pip install semgrep==1.179.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install hash-locked Semgrep CLI
+        run: python -m pip install --disable-pip-version-check --require-hashes -r .github/scripts/requirements-semgrep.txt
 
       - name: Run Semgrep security rules
         run: >-
@@ -131,12 +143,14 @@ jobs:
   secret-scanning:
     name: "Secret Detection"
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: trufflesecurity/trufflehog@31ce31ee1abbcc7dc8eee5764c17121c3044c8b2
         with:
           path: ./
