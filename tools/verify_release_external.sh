@@ -120,10 +120,65 @@ gh attestation verify \
   --source-ref "refs/tags/$TAG" \
   --deny-self-hosted-runners
 
+SBOM_NAME="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("sbom", ""))' "$MANIFEST")"
+if [ -z "$SBOM_NAME" ]; then
+  python3 - "$TAG" <<'PY'
+import re
+import sys
+
+match = re.fullmatch(r'v(\d+)\.(\d+)\.(\d+)', sys.argv[1])
+assert match and tuple(map(int, match.groups())) < (0, 3, 0), 'releases from v0.3.0 on must publish an SBOM'
+PY
+  SBOM_RESULT='NOT_PUBLISHED_BEFORE_V0_3_0'
+else
+  test "$SBOM_NAME" = "RightsFrames-Termux-$TAG.cdx.json"
+  gh release download "$TAG" --repo "$REPO" --pattern "$SBOM_NAME" --dir "$TMP/release"
+  SBOM="$TMP/release/$SBOM_NAME"
+  test -s "$SBOM"
+  python3 - "$MANIFEST" "$SBOM" <<'PY'
+import hashlib
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding='utf-8'))
+assert manifest['sbomSha256'] == hashlib.sha256(open(sys.argv[2], 'rb').read()).hexdigest()
+assert manifest['sbomPredicateType'] == 'https://cyclonedx.org/bom'
+PY
+  # The SBOM checker is taken from the release's own source tree.
+  python3 "$TMP/source/tools/rf_release_sbom.py" verify \
+    --sbom "$SBOM" \
+    --requirements "$TMP/source/core/requirements.txt" \
+    --version "${TAG#v}"
+  gh attestation verify \
+    "$ART" \
+    --repo "$REPO" \
+    --predicate-type https://cyclonedx.org/bom \
+    --signer-workflow "$REPO/.github/workflows/provenance-gate.yml" \
+    --source-ref "refs/tags/$TAG" \
+    --deny-self-hosted-runners \
+    --format json > "$TMP/sbom-attestation.json"
+  python3 - "$TMP/sbom-attestation.json" "$SBOM" <<'PY'
+import json
+import sys
+
+results = json.load(open(sys.argv[1], encoding='utf-8'))
+published = json.load(open(sys.argv[2], encoding='utf-8'))
+predicates = [
+    item['verificationResult']['statement']['predicate']
+    for item in results
+    if item['verificationResult']['statement']['predicateType'] == 'https://cyclonedx.org/bom'
+]
+assert predicates, 'no verified SBOM attestation'
+assert any(p == published for p in predicates), 'published SBOM differs from the attested SBOM'
+PY
+  SBOM_RESULT='VERIFIED'
+fi
+
 echo 'RELEASE_ATTESTATION=VERIFIED'
 echo 'SOURCE_COMMIT=VERIFIED'
 echo 'SOURCE_TREE=VERIFIED'
 echo 'ARTIFACT_DIGEST=VERIFIED'
 echo 'REPRODUCIBLE_FROM_PUBLIC_SOURCE=VERIFIED'
 echo 'SLSA_BUILD_LEVEL=3'
+echo "SBOM=$SBOM_RESULT"
 echo 'INDEPENDENT_EXTERNAL_VERIFICATION=PASSED'
