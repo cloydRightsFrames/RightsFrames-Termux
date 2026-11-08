@@ -20,7 +20,7 @@ from cryptography.hazmat.primitives import serialization
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from core import rf_core  # noqa: E402
+from core import rf_core, rf_merkle  # noqa: E402
 
 
 def _load(name: str, rel: str):
@@ -105,18 +105,26 @@ def _ed_private(base: Path):
     return serialization.load_pem_private_key((base / 'signing_key.pem').read_bytes(), None)
 
 
+_FIELDS = {'rf.anchor.v2': verifier.ANCHOR_CORE_V2, 'rf.anchor.v3': verifier.ANCHOR_CORE_V3,
+           'rf.anchor.v4': verifier.ANCHOR_CORE_V4}
+HYBRID = ('rf.anchor.v3', 'rf.anchor.v4')
+
+
 def _resign_ed25519(anchors, ledger, ed_private, keep_pq=True, downgrade_from=None):
-    """Recompute anchor heads/hashes and Ed25519 signatures as a key-holding attacker."""
+    """Recompute anchor heads/hashes/Merkle roots and Ed25519 signatures as a key-holding attacker."""
     heads = [ZERO] + [r['entry_hash'] for r in ledger]
     prev = ZERO
     out = []
     for i, a in enumerate(anchors, 1):
         a = dict(a, ledger_head=heads[a['ledger_count']], prev_anchor_hash=prev)
-        if downgrade_from is not None and i >= downgrade_from and a['schema'] == 'rf.anchor.v3':
+        if downgrade_from is not None and i >= downgrade_from and a['schema'] in HYBRID:
             a['schema'] = 'rf.anchor.v2'
             a.pop('pq_key_id')
             a.pop('pq_signature')
-        fields = verifier.ANCHOR_CORE_V3 if a['schema'] == 'rf.anchor.v3' else verifier.ANCHOR_CORE_V2
+            a.pop('merkle_root', None)
+        if a['schema'] == 'rf.anchor.v4':
+            a['merkle_root'] = rf_merkle.merkle_root(heads[1:a['ledger_count'] + 1])
+        fields = _FIELDS[a['schema']]
         a['anchor_hash'] = _sha(_canon({k: a[k] for k in fields}).encode())
         a['signature'] = base64.b64encode(ed_private.sign(a['anchor_hash'].encode())).decode()
         if not keep_pq and 'pq_signature' in a:
@@ -149,8 +157,12 @@ def hybrid(tmp_path, monkeypatch):
 @needs_pq
 def test_core_creates_and_verifies_hybrid_anchors(hybrid):
     a1 = hybrid['a1']
-    assert a1['schema'] == 'rf.anchor.v3'
+    assert a1['schema'] == 'rf.anchor.v4'
     assert a1['pq_key_id'].startswith('mldsa65:')
+    hashes = [row[0] for row in rf_core._connect().execute(
+        'SELECT entry_hash FROM ledger_entries ORDER BY id').fetchall()]
+    assert a1['merkle_root'] == rf_merkle.merkle_root(hashes[:3])
+    assert hybrid['a2']['merkle_root'] == rf_merkle.merkle_root(hashes)
     assert len(base64.b64decode(a1['pq_signature'])) == 3309
     assert rf_core.verify_anchors() == (True, 'verified 2 anchors')
 
@@ -201,7 +213,7 @@ def test_core_upgrades_v2_ledger_to_hybrid(tmp_path, monkeypatch):
     assert rf_core.create_anchor()['schema'] == 'rf.anchor.v2'
     monkeypatch.setenv('RF_PQ_SIGNING', 'auto')
     rf_core.append_entry('evt', {'n': 2})
-    assert rf_core.create_anchor()['schema'] == 'rf.anchor.v3'
+    assert rf_core.create_anchor()['schema'] == 'rf.anchor.v4'
     assert rf_core.verify_anchors() == (True, 'verified 2 anchors')
     report = verifier.verify_bundle(str(exporter.export_bundle(tmp_path, tmp_path / 'b.zip') and
                                         tmp_path / 'b.zip'), require_pq=True)
@@ -410,7 +422,7 @@ def test_substituted_pq_key_is_caught_by_pq_key_pin(hybrid, tmp_path):
     anchors = _resign_ed25519(anchors, ledger, _ed_private(hybrid['base']))
     for a in anchors:
         a['pq_signature'] = base64.b64encode(
-            attacker.sign(a['anchor_hash'].encode(), b'rf.anchor.v3')).decode()
+            attacker.sign(a['anchor_hash'].encode(), a['schema'].encode())).decode()
     man = json.loads(m['manifest.json'])
     man['pq_key_id'] = attacker_id
     forged_m = _reseal({**m, 'manifest.json': _canon(man).encode(), 'anchors.jsonl': _dump(anchors),
@@ -512,7 +524,7 @@ def test_rewritten_tail_after_old_pin_is_flagged(hybrid):
     anchors = _resign_ed25519(_jsonl(m['anchors.jsonl']), ledger, _ed_private(hybrid['base']))
     for a in anchors:
         a['pq_signature'] = base64.b64encode(
-            pq_private.sign(a['anchor_hash'].encode(), b'rf.anchor.v3')).decode()
+            pq_private.sign(a['anchor_hash'].encode(), a['schema'].encode())).decode()
     forged = _write(hybrid['tmp'] / 'tail.zip',
                     _reseal({**m, 'ledger.jsonl': _dump(ledger), 'anchors.jsonl': _dump(anchors)}))
     pin1 = [(1, hybrid['a1']['anchor_hash'])]

@@ -10,10 +10,17 @@ be rejected; an unpinned forgery must be reported as internal_only, never as
 anchor_pinned.
 
 When the installed cryptography supports ML-DSA-65, anchors are hybrid
-(Ed25519 + ML-DSA-65) and two post-quantum attacks are added: a "quantum
-forger" who holds the operator's Ed25519 private key (as if recovered by a
-quantum computer) but not the ML-DSA-65 key, and a downgrade that strips the
-post-quantum signatures. Both must be rejected without any anchor pin.
+(Ed25519 + ML-DSA-65, rf.anchor.v4 with an RFC 9162 Merkle root) and two
+post-quantum attacks are added: a "quantum forger" who holds the operator's
+Ed25519 private key (as if recovered by a quantum computer) but not the
+ML-DSA-65 key, and a downgrade that strips the post-quantum signatures. Both
+must be rejected without any anchor pin.
+
+Hybrid ledgers also get four single-entry inclusion receipt checks
+(rf.receipt.v1, selective disclosure of one entry): an honest pinned receipt
+verifies; a receipt whose entry is edited and re-hashed, a receipt re-signed by
+the quantum forger, and an attacker ledger's receipt checked against the
+operator's pin are all rejected.
 
 Usage:
     python tools/rf_demo.py [--entries N] [--keep DIR] [--json]
@@ -39,11 +46,16 @@ from typing import Any, Callable, Sequence
 ROOT = Path(__file__).resolve().parents[1]
 VERIFIER = ROOT / 'verifier' / 'rf_verify.py'
 EXPORTER = ROOT / 'tools' / 'rf_export_evidence.py'
+RECEIPT_EXPORTER = ROOT / 'tools' / 'rf_export_receipt.py'
 ZERO_HASH = '0' * 64
 ANCHOR_V3 = 'rf.anchor.v3'
+ANCHOR_V4 = 'rf.anchor.v4'
+HYBRID = (ANCHOR_V3, ANCHOR_V4)
 ANCHOR_CORE_V2 = ('schema', 'seq', 'created_at', 'ledger_count', 'ledger_head',
                   'prev_anchor_hash', 'key_id')
 ANCHOR_CORE_V3 = ANCHOR_CORE_V2 + ('pq_key_id',)
+ANCHOR_CORE_V4 = ANCHOR_CORE_V3 + ('merkle_root',)
+CORE_FIELDS = {'rf.anchor.v2': ANCHOR_CORE_V2, ANCHOR_V3: ANCHOR_CORE_V3, ANCHOR_V4: ANCHOR_CORE_V4}
 
 _LEDGER_SCRIPT = r'''
 import json, sys
@@ -73,6 +85,20 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def merkle_root(entry_hashes: Sequence[str]) -> str:
+    """RFC 9162 root over raw entry hashes: anything an attacker can recompute without a key."""
+    def leaf(h: str) -> bytes:
+        return hashlib.sha256(b'\x00' + bytes.fromhex(h)).digest()
+
+    def tree(lo: int, hi: int) -> bytes:
+        if hi - lo == 1:
+            return leaf(entry_hashes[lo])
+        split = lo + (1 << ((hi - lo - 1).bit_length() - 1))
+        return hashlib.sha256(b'\x01' + tree(lo, split) + tree(split, hi)).digest()
+
+    return tree(0, len(entry_hashes)).hex() if entry_hashes else hashlib.sha256(b'').hexdigest()
+
+
 def build_ledger(data_dir: Path, entries: int, tag: str) -> dict[str, Any]:
     """Create a ledger in its own process so RF_DATA_DIR is honoured at import."""
     data_dir.mkdir(parents=True, exist_ok=True)
@@ -99,8 +125,19 @@ def export_bundle(data_dir: Path, out: Path) -> dict[str, Any]:
     return module.export_bundle(data_dir, out)
 
 
-def verify(bundle: Path, pins: Sequence[str] = ()) -> tuple[int, dict[str, Any]]:
+def export_receipt(data_dir: Path, entry_id: int, out: Path) -> dict[str, Any]:
+    spec = importlib.util.spec_from_file_location('rf_export_receipt_demo', RECEIPT_EXPORTER)
+    if spec is None or spec.loader is None:
+        raise DemoError(f'cannot load receipt exporter: {RECEIPT_EXPORTER}')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.export_receipt(data_dir, entry_id, out)
+
+
+def verify(bundle: Path, pins: Sequence[str] = (), receipt: bool = False) -> tuple[int, dict[str, Any]]:
     cmd = [sys.executable, '-I', str(VERIFIER), str(bundle), '--json', *pins]
+    if receipt:
+        cmd.append('--receipt')
     proc = subprocess.run(cmd, text=True, capture_output=True, timeout=120)
     lines = proc.stdout.strip().splitlines()
     if not lines:
@@ -206,11 +243,14 @@ def resign_with_ed25519(members: dict[str, bytes], ed25519_key: Path,
     anchors = []
     for anchor in split_jsonl(members['anchors.jsonl']):
         anchor = dict(anchor, ledger_head=heads[anchor['ledger_count']], prev_anchor_hash=previous)
-        if downgrade and anchor.get('schema') == ANCHOR_V3:
+        if downgrade and anchor.get('schema') in HYBRID:
             anchor['schema'] = 'rf.anchor.v2'
             anchor.pop('pq_key_id', None)
             anchor.pop('pq_signature', None)
-        fields = ANCHOR_CORE_V3 if anchor.get('schema') == ANCHOR_V3 else ANCHOR_CORE_V2
+            anchor.pop('merkle_root', None)
+        if anchor.get('schema') == ANCHOR_V4:
+            anchor['merkle_root'] = merkle_root(heads[1:anchor['ledger_count'] + 1])
+        fields = CORE_FIELDS[anchor['schema']]
         anchor['anchor_hash'] = sha256_hex(canonical_json({k: anchor[k] for k in fields}).encode('utf-8'))
         signature = private.sign(anchor['anchor_hash'].encode('ascii'))
         anchor['signature'] = base64.b64encode(signature).decode('ascii')
@@ -218,6 +258,53 @@ def resign_with_ed25519(members: dict[str, bytes], ed25519_key: Path,
         anchors.append(anchor)
     members = dict(members, **{'ledger.jsonl': join_jsonl(rows), 'anchors.jsonl': join_jsonl(anchors)})
     return reseal_manifest(members)
+
+
+def _write_json(path: Path, value: dict[str, Any]) -> Path:
+    path.write_text(canonical_json(value) + '\n', encoding='utf-8')
+    return path
+
+
+def receipt_edit_entry(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Edit the disclosed entry and recompute its hash; the signed Merkle root is untouched."""
+    forged = json.loads(json.dumps(receipt))
+    entry = forged['entry']
+    payload = json.loads(entry['payload'])
+    payload['n'] = 999_999
+    entry['payload'] = canonical_json(payload)
+    material = f"{entry['id']}|{entry['prev_hash']}|{entry['ts']}|{entry['entry_type']}|{entry['payload']}"
+    entry['entry_hash'] = sha256_hex(material.encode('utf-8'))
+    return forged
+
+
+def receipt_quantum_forger(receipt: dict[str, Any], ed25519_key: Path) -> dict[str, Any]:
+    """Edit the entry, re-root the tree from the proof, re-sign the anchor with the stolen Ed25519 key."""
+    from cryptography.hazmat.primitives import serialization
+    private = serialization.load_pem_private_key(ed25519_key.read_bytes(), password=None)
+    forged = receipt_edit_entry(receipt)
+    index, size = forged['leaf_index'], forged['tree_size']
+    digest = hashlib.sha256(b'\x00' + bytes.fromhex(forged['entry']['entry_hash'])).digest()
+    fn, sn = index, size - 1
+    for item in forged['inclusion_path']:
+        sibling = bytes.fromhex(item)
+        if fn & 1 or fn == sn:
+            digest = hashlib.sha256(b'\x01' + sibling + digest).digest()
+            while not fn & 1 and fn:
+                fn >>= 1
+                sn >>= 1
+        else:
+            digest = hashlib.sha256(b'\x01' + digest + sibling).digest()
+        fn >>= 1
+        sn >>= 1
+    anchor = forged['anchor']
+    anchor['merkle_root'] = digest.hex()
+    if forged['entry']['id'] == size:
+        anchor['ledger_head'] = forged['entry']['entry_hash']
+    anchor['anchor_hash'] = sha256_hex(
+        canonical_json({k: anchor[k] for k in ANCHOR_CORE_V4}).encode('utf-8'))
+    anchor['signature'] = base64.b64encode(
+        private.sign(anchor['anchor_hash'].encode('ascii'))).decode('ascii')
+    return forged
 
 
 def run_demo(workdir: Path, entries: int) -> dict[str, Any]:
@@ -238,8 +325,8 @@ def run_demo(workdir: Path, entries: int) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
 
     def check(name: str, path: Path, pins: Sequence[str], expect_code: int,
-              expect_trust: str | None = None) -> None:
-        code, report = verify(path, pins)
+              expect_trust: str | None = None, receipt: bool = False) -> None:
+        code, report = verify(path, pins, receipt)
         held = code == expect_code and (expect_trust is None or report.get('trust_level') == expect_trust)
         outcome = (f"VERIFIED ({report.get('trust_level')})" if report.get('status') == 'VERIFIED'
                    else f"REJECTED: {report.get('error')}")
@@ -277,6 +364,24 @@ def run_demo(workdir: Path, entries: int) -> dict[str, Any]:
         write_bundle(stripped, resign_with_ed25519(original, stolen_ed25519, downgrade=True))
         check('downgrade: strip ML-DSA-65 signatures, re-sign Ed25519, key pins only',
               stripped, key_pins, 1)
+
+        honest_receipt = workdir / 'receipt-entry-2.json'
+        receipt = export_receipt(workdir / 'operator', 2, honest_receipt)
+        receipt_pins = ['--pin-key-id', key_id, '--pin-pq-key-id', pq_key_id, '--pin-anchor',
+                        f"{receipt['anchor']['seq']}:{receipt['anchor']['anchor_hash']}"]
+        check('receipt: disclose one entry only, operator pin held externally',
+              honest_receipt, receipt_pins, 0, 'anchor_pinned', receipt=True)
+        check('receipt: edit disclosed entry + recompute its hash',
+              _write_json(workdir / 'attack-receipt-edit.json', receipt_edit_entry(receipt)),
+              receipt_pins, 1, receipt=True)
+        check('receipt: quantum forger re-roots Merkle tree, re-signs Ed25519, key pins only',
+              _write_json(workdir / 'attack-receipt-quantum.json',
+                          receipt_quantum_forger(receipt, stolen_ed25519)),
+              key_pins[:4], 1, receipt=True)
+        attacker_receipt = workdir / 'attack-receipt-attacker-ledger.json'
+        export_receipt(forged_dir, 2, attacker_receipt)
+        check('receipt: attacker ledger receipt, operator pins', attacker_receipt,
+              receipt_pins, 1, receipt=True)
     return {'results': results, 'post_quantum': 'hybrid ML-DSA-65' if pq_key_id else 'unavailable',
             'pq_key_id': pq_key_id}
 

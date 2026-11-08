@@ -6,6 +6,11 @@ services:
     environment:
       RF_API_KEY: ${RF_API_KEY:-}
       RF_ALLOWED_HOSTS: ${RF_ALLOWED_HOSTS:-127.0.0.1,localhost}
+      # Signing keys sealed at rest (core/rf_keyseal.py). Mount the passphrase file
+      # owned by uid 10001 with mode 0600 and point RF_KEY_PASSPHRASE_FILE at it;
+      # RF_REQUIRE_SEALED_KEYS=1 then refuses plaintext keys.
+      RF_KEY_PASSPHRASE_FILE: ${RF_KEY_PASSPHRASE_FILE:-}
+      RF_REQUIRE_SEALED_KEYS: ${RF_REQUIRE_SEALED_KEYS:-}
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

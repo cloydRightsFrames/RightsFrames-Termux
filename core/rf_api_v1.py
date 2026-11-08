@@ -17,10 +17,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field
 
 import rf_auth
 import rf_core
+import rf_receipt
 
 router = APIRouter(prefix='/v1')
 
@@ -203,6 +205,21 @@ def entries_create(body: EntryBody, response: Response,
                             detail='idempotency key reused with a different request') from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get('/entries/{entry_id}/receipt')
+def entry_receipt(entry_id: int = PathParam(ge=1), anchor_seq: int | None = Query(None, ge=1),
+                  principal: dict = Depends(require('ledger:read'))):
+    """Single-entry inclusion receipt (rf.receipt.v1): proves one entry without the rest."""
+    try:
+        return rf_receipt.build_receipt(rf_core.DATA_DIR, entry_id, anchor_seq)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except rf_receipt.ReceiptUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ValueError, TypeError, OSError):
+        raise HTTPException(status_code=500,
+                            detail='receipt self-check failed; verify ledger integrity') from None
 
 
 @router.get('/evidence/export')

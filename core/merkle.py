@@ -26,13 +26,16 @@ def compute_merkle_root(leaves: list[bytes]) -> bytes:
 
     level = [hash_leaf(item) for item in leaves]
 
+    # An odd trailing node is carried up unchanged, never paired with a copy of
+    # itself: duplicating it would give [a, b, c] and [a, b, c, c] the same root
+    # (CVE-2012-2459). Carrying it up yields the RFC 9162 tree shape.
     while len(level) > 1:
-        if len(level) & 1:
-            level.append(level[-1])
-
-        level = [
+        paired = [
             hash_node(level[i], level[i + 1])
-            for i in range(0, len(level), 2)
+            for i in range(0, len(level) - 1, 2)
         ]
+        if len(level) & 1:
+            paired.append(level[-1])
+        level = paired
 
     return level[0]

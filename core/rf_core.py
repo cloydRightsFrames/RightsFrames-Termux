@@ -17,6 +17,13 @@ from typing import Any, Iterator
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+try:  # imported as core.rf_core (package) or as rf_core (core/ on sys.path)
+    from . import rf_keyseal as _keyseal
+    from . import rf_merkle as _merkle
+except ImportError:
+    import rf_keyseal as _keyseal  # type: ignore[no-redef]
+    import rf_merkle as _merkle  # type: ignore[no-redef]
+
 DATA_DIR = Path(os.environ.get('RF_DATA_DIR', '/data')).resolve()
 DB_PATH = DATA_DIR / 'ledger.db'
 PRIVATE_KEY_PATH = DATA_DIR / 'signing_key.pem'
@@ -35,10 +42,15 @@ MAX_ANCHOR_CHAIN_LENGTH = 1000000
 
 ANCHOR_SCHEMA_V2 = 'rf.anchor.v2'
 ANCHOR_SCHEMA_V3 = 'rf.anchor.v3'
+ANCHOR_SCHEMA_V4 = 'rf.anchor.v4'
+HYBRID_SCHEMAS = (ANCHOR_SCHEMA_V3, ANCHOR_SCHEMA_V4)
 ANCHOR_CORE_LEGACY = ('schema', 'seq', 'created_at', 'ledger_count', 'ledger_head',
                       'prev_anchor_hash')
 ANCHOR_CORE_V2 = ANCHOR_CORE_LEGACY + ('key_id',)
 ANCHOR_CORE_V3 = ANCHOR_CORE_V2 + ('pq_key_id',)
+# v4 = v3 + an RFC 9162 Merkle root over entry hashes 1..ledger_count, so a single
+# entry can be proven with an O(log n) inclusion receipt (rf.receipt.v1).
+ANCHOR_CORE_V4 = ANCHOR_CORE_V3 + ('merkle_root',)
 
 # Post-quantum co-signature: ML-DSA-65 (NIST FIPS 204), domain-separated by
 # context string. v3 anchors are valid only if BOTH signatures verify, so an
@@ -46,6 +58,8 @@ ANCHOR_CORE_V3 = ANCHOR_CORE_V2 + ('pq_key_id',)
 PQ_ALGORITHM = 'ML-DSA-65'
 PQ_KEY_PREFIX = 'mldsa65:'
 PQ_SIGNATURE_CONTEXT = b'rf.anchor.v3'
+# Each hybrid schema signs under its own ML-DSA context string (its schema name).
+PQ_CONTEXTS = {ANCHOR_SCHEMA_V3: b'rf.anchor.v3', ANCHOR_SCHEMA_V4: b'rf.anchor.v4'}
 PQ_MODES = ('auto', 'on', 'off')
 PQ_PRIVATE_KEY_NAME = 'signing_key_mldsa65.pem'
 PQ_PUBLIC_KEY_NAME = 'signing_key_mldsa65.pub.pem'
@@ -126,24 +140,56 @@ def _write_text_atomic(path: Path, value: str, mode: int) -> None:
     _atomic_write(path, value.encode('utf-8'), mode)
 
 
+# Opened sealed keys, keyed by file identity and content digest, so a long-running
+# service pays the memory-hard KDF once per key rather than once per anchor or per
+# /health probe (which would also be a cheap denial-of-service lever).
+_SEALED_KEY_CACHE: dict[tuple[Any, ...], Any] = {}
+_SEALED_KEY_CACHE_LIMIT = 8
+
+
+def _load_private_key_file(path: Path, role: str) -> Any:
+    data = path.read_bytes()
+    if not _keyseal.is_sealed(data):
+        return _keyseal.load_private_key(data, role, None)
+    passphrase = _keyseal.passphrase_from_env()
+    if passphrase is None:
+        return _keyseal.load_private_key(data, role, None)
+    info = path.stat()
+    cache_key = (str(path), info.st_ino, info.st_mtime_ns, role,
+                 hashlib.sha256(data).digest(), hashlib.sha256(passphrase).digest())
+    cached = _SEALED_KEY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    private = _keyseal.load_private_key(data, role, passphrase)
+    if len(_SEALED_KEY_CACHE) >= _SEALED_KEY_CACHE_LIMIT:
+        _SEALED_KEY_CACHE.clear()
+    _SEALED_KEY_CACHE[cache_key] = private
+    return private
+
+
+def _store_private_key(path: Path, private: Any, role: str) -> None:
+    blob = _keyseal.serialize_private_key(private, role, _keyseal.passphrase_from_env())
+    _atomic_write(path, blob, 0o600)
+
+
+def key_custody() -> dict[str, Any]:
+    """Non-secret at-rest status of both private signing keys (sealed, plaintext or absent)."""
+    report: dict[str, Any] = {'sealing_required': _keyseal.sealing_required()}
+    for role, path in (('ed25519', PRIVATE_KEY_PATH), ('mldsa65', pq_private_key_path())):
+        report[role] = _keyseal.describe(path.read_bytes()) if path.exists() else {'absent': True}
+    return report
+
+
 def load_or_create_keypair() -> tuple[Ed25519PrivateKey, bytes, str]:
     _secure_directory()
 
     if PRIVATE_KEY_PATH.exists():
-        private = serialization.load_pem_private_key(
-            PRIVATE_KEY_PATH.read_bytes(),
-            password=None,
-        )
+        private = _load_private_key_file(PRIVATE_KEY_PATH, 'ed25519')
         if not isinstance(private, Ed25519PrivateKey):
             raise TypeError('signing key is not Ed25519')
     else:
         private = Ed25519PrivateKey.generate()
-        pem = private.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-        _atomic_write(PRIVATE_KEY_PATH, pem, 0o600)
+        _store_private_key(PRIVATE_KEY_PATH, private, 'ed25519')
 
     public = private.public_key().public_bytes(
         serialization.Encoding.Raw,
@@ -246,7 +292,7 @@ def load_or_create_pq_keypair() -> tuple[Any, str]:
     private_path, public_path = pq_private_key_path(), pq_public_key_path()
 
     if private_path.exists():
-        private = serialization.load_pem_private_key(private_path.read_bytes(), password=None)
+        private = _load_private_key_file(private_path, 'mldsa65')
         if not isinstance(private, mldsa.MLDSA65PrivateKey):
             raise TypeError('post-quantum signing key is not ML-DSA-65')
     else:
@@ -254,12 +300,7 @@ def load_or_create_pq_keypair() -> tuple[Any, str]:
             raise ValueError('post-quantum public key exists without its private key; '
                              'refusing to rotate silently')
         private = mldsa.MLDSA65PrivateKey.generate()
-        pem = private.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-        _atomic_write(private_path, pem, 0o600)
+        _store_private_key(private_path, private, 'mldsa65')
 
     public_raw = _pq_raw(private.public_key())
     if public_path.exists():
@@ -548,7 +589,7 @@ def _append_anchor_line(anchor: dict[str, Any]) -> None:
 def _select_pq_signer(anchors: list[dict[str, Any]]) -> tuple[Any, str] | None:
     """Decide whether the next anchor is hybrid; refuse any post-quantum downgrade."""
     mode = pq_mode()
-    already_pq = any(item.get('schema') == ANCHOR_SCHEMA_V3 for item in anchors)
+    already_pq = any(item.get('schema') in HYBRID_SCHEMAS for item in anchors)
     if mode == 'off':
         if already_pq:
             raise ValueError('ledger already has post-quantum anchors; '
@@ -560,6 +601,21 @@ def _select_pq_signer(anchors: list[dict[str, Any]]) -> tuple[Any, str] | None:
         return load_or_create_pq_keypair()
     except (RuntimeError, TypeError) as exc:
         raise ValueError(f'post-quantum anchor signing unavailable: {exc}') from exc
+
+
+def _entry_hashes_through(last_id: int) -> list[str]:
+    """Entry hashes 1..last_id in order (the Merkle leaves an anchor commits to)."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            'SELECT id, entry_hash FROM ledger_entries WHERE id <= ? ORDER BY id ASC',
+            (last_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if len(rows) != last_id or (rows and int(rows[-1][0]) != last_id):
+        raise ValueError('ledger is missing entries below the anchored head')
+    return [str(row[1]) for row in rows]
 
 
 def create_anchor() -> dict[str, Any]:
@@ -601,8 +657,9 @@ def create_anchor() -> dict[str, Any]:
             'key_id': key_id,
         }
         if pq_signer is not None:
-            core['schema'] = ANCHOR_SCHEMA_V3
+            core['schema'] = ANCHOR_SCHEMA_V4
             core['pq_key_id'] = pq_signer[1]
+            core['merkle_root'] = _merkle.merkle_root(_entry_hashes_through(last_id))
 
         anchor_hash = _canonical_anchor_hash(core)
         signed = anchor_hash.encode('ascii')
@@ -614,7 +671,7 @@ def create_anchor() -> dict[str, Any]:
             'signature': base64.b64encode(signature).decode('ascii'),
         }
         if pq_signer is not None:
-            pq_signature = pq_signer[0].sign(signed, PQ_SIGNATURE_CONTEXT)
+            pq_signature = pq_signer[0].sign(signed, PQ_CONTEXTS[core['schema']])
             anchor['pq_signature'] = base64.b64encode(pq_signature).decode('ascii')
 
         _append_anchor_line(anchor)
@@ -635,8 +692,10 @@ def verify_anchors() -> tuple[bool, str]:
     previous_anchor_hash = '0' * 64
     previous_ledger_count = 0
     seen_pq = False
+    seen_merkle = False
     pq_public: tuple[Any, str] | None = None
     ledger_heads: list[str] = []
+    merkle_claims: dict[int, list[tuple[int, str]]] = {}
 
     for index, anchor in enumerate(anchors, 1):
         try:
@@ -664,10 +723,16 @@ def verify_anchors() -> tuple[bool, str]:
             return False, f'ledger count regressed at anchor {index}'
 
         legacy = 'key_id' not in anchor
-        hybrid = anchor.get('schema') == ANCHOR_SCHEMA_V3
+        schema = anchor.get('schema')
+        hybrid = schema in HYBRID_SCHEMAS
+        merkle = schema == ANCHOR_SCHEMA_V4
 
+        if legacy and hybrid:
+            return False, f'anchor {index} claims {schema} without a key identity'
         if seen_pq and not hybrid:
             return False, f'post-quantum downgrade at anchor {index}'
+        if seen_merkle and not merkle:
+            return False, f'merkle commitment downgrade at anchor {index}'
 
         try:
             if legacy:
@@ -676,9 +741,16 @@ def verify_anchors() -> tuple[bool, str]:
             else:
                 if anchor.get('key_id') != current_key_id:
                     return False, f'key identity mismatch at anchor {index}'
-                fields = ANCHOR_CORE_V3 if hybrid else ANCHOR_CORE_V2
+                fields = (ANCHOR_CORE_V4 if merkle else
+                          ANCHOR_CORE_V3 if hybrid else ANCHOR_CORE_V2)
                 core = {key: anchor[key] for key in fields}
                 expected_hash = _canonical_anchor_hash(core)
+                if merkle:
+                    root = anchor['merkle_root']
+                    if not isinstance(root, str) or len(root) != 64 or \
+                            root.strip('0123456789abcdef'):
+                        return False, f'anchor {index} malformed'
+                    merkle_claims.setdefault(ledger_count, []).append((index, root))
         except (KeyError, ValueError):
             return False, f'anchor {index} malformed'
 
@@ -706,10 +778,11 @@ def verify_anchors() -> tuple[bool, str]:
             try:
                 pq_signature = base64.b64decode(anchor['pq_signature'], validate=True)
                 pq_public[0].verify(pq_signature, anchor_hash.encode('ascii'),
-                                    PQ_SIGNATURE_CONTEXT)
+                                    PQ_CONTEXTS[schema])
             except Exception:
                 return False, f'post-quantum signature invalid at anchor {index}'
             seen_pq = True
+            seen_merkle = seen_merkle or merkle
 
         previous_anchor_hash = anchor_hash
         previous_ledger_count = ledger_count
@@ -750,6 +823,19 @@ def verify_anchors() -> tuple[bool, str]:
                         f'anchor {index} ledger head differs from ledger '
                         f'entry {anchored_count}',
                     )
+            if merkle_claims:
+                hashes = [str(item[0]) for item in anchor_conn.execute(
+                    'SELECT entry_hash FROM ledger_entries WHERE id <= ? ORDER BY id ASC',
+                    (max(merkle_claims),),
+                ).fetchall()]
+                try:
+                    roots = _merkle.roots_at(hashes, merkle_claims)
+                except ValueError:
+                    return False, 'merkle commitment references missing ledger entries'
+                for count, claims in merkle_claims.items():
+                    for index, claimed in claims:
+                        if not secrets.compare_digest(roots[count], claimed):
+                            return False, f'merkle root mismatch at anchor {index}'
         finally:
             anchor_conn.close()
     except sqlite3.Error:
