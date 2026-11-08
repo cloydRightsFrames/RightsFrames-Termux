@@ -144,6 +144,16 @@ pressure). Every change is backed up; `--dry-run` shows them first.
     bash termux/rf-pinnacle.sh             # apply
     bash termux/rf-pinnacle.sh status      # live watchdog view
 
+### Encrypted Off-Device Backups
+
+`termux/rf-offsite-backup.sh` finds your age key and rclone remote (or asks
+once), saves them for `rf_apex_final`, takes a fresh PostgreSQL backup,
+encrypts it with age, uploads it, verifies the readback hash and decryption,
+and schedules it daily under runit. Nothing on the remote is ever deleted.
+
+    bash termux/rf-offsite-backup.sh          # one-time guided setup
+    bash termux/rf-offsite-backup.sh status   # last result and schedule
+
 ## Honest Limitations
 
 This proves the ledger's integrity, not the security of whatever system
