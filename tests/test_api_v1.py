@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -150,7 +151,7 @@ def test_failed_auth_throttle(env):
 
 def test_secret_never_stored(env):
     secret = env.admin.split('.')[2].encode()
-    for path in (rf_core.DATA_DIR).glob('principals.db*'):
+    for path in (rf_core.DATA_DIR).glob('*.db*'):
         assert secret not in path.read_bytes()
 
 
@@ -177,3 +178,29 @@ def test_anchor_and_export_verify_independently(env):
     path.write_bytes(r.content)
     report = verifier.verify_bundle(str(path), pin_anchors=[(anchor['seq'], anchor['anchor_hash'])])
     assert report['trust_level'] == 'anchor_pinned'
+
+@pytest.mark.skipif(not rf_core.pq_available(), reason='cryptography build lacks ML-DSA-65')
+def test_entry_receipt_endpoint(env, tmp_path):
+    reader = _mk(env, 'receipt-reader', ['ledger:read'])
+    for n in range(3):
+        assert env.client.post('/v1/entries', headers=_h(env.admin),
+                               json={'entry_type': 'evt', 'payload': {'n': n}}).status_code == 201
+    early = env.client.get('/v1/entries/2/receipt', headers=_h(reader))
+    assert early.status_code == 409 and 'create an anchor first' in early.json()['detail']
+    anchor = env.client.post('/v1/anchors', headers=_h(env.admin)).json()
+    assert anchor['schema'] == 'rf.anchor.v4'
+    r = env.client.get('/v1/entries/2/receipt', headers=_h(reader))
+    assert r.status_code == 200, r.text
+    receipt = r.json()
+    assert receipt['schema'] == 'rf.receipt.v1' and receipt['anchor']['seq'] == anchor['seq']
+    path = tmp_path / 'api-receipt.json'
+    path.write_text(json.dumps(receipt), encoding='utf-8')
+    report = verifier.verify_receipt(str(path), pin_anchors=[(anchor['seq'], anchor['anchor_hash'])])
+    assert report['trust_level'] == 'anchor_pinned' and report['entry_id'] == 2
+    assert env.client.get('/v1/entries/2/receipt', headers=_h(_mk(env, 'no-read', ['entries:write']))
+                          ).status_code == 403
+    assert env.client.get('/v1/entries/2/receipt').status_code == 401
+    assert env.client.get('/v1/entries/0/receipt', headers=_h(reader)).status_code == 422
+    assert env.client.get('/v1/entries/2/receipt', headers=_h(reader),
+                          params={'anchor_seq': 99}).status_code == 404
+    assert env.client.get('/v1/entries/999/receipt', headers=_h(reader)).status_code == 409

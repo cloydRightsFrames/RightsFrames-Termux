@@ -17,10 +17,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field
 
 import rf_auth
 import rf_core
+import rf_receipt
 
 router = APIRouter(prefix='/v1')
 
@@ -178,12 +180,18 @@ def anchors_create(principal: dict = Depends(require('anchor:create'))):
 def entries_create(body: EntryBody, response: Response,
                    principal: dict = Depends(require('entries:write')),
                    idempotency_key: str | None = Header(default=None)):
+    audit = {'entry_type': body.entry_type,
+             'payload_sha256': _sha(rf_core._canonical_json(body.payload))}
+
     def do_append() -> dict[str, Any]:
-        _audit(principal, 'entries.append', {
-            'entry_type': body.entry_type,
-            'payload_sha256': _sha(rf_core._canonical_json(body.payload)),
-        })
+        _audit(principal, 'entries.append', audit)
         return rf_core.append_entry(body.entry_type, body.payload)
+
+    def do_append_once(conn: Any) -> dict[str, Any]:
+        # Audit record, entry and idempotency record commit in one transaction.
+        rf_core.append_entry_in(conn, 'audit.api',
+                                {'principal': principal['id'], 'action': 'entries.append', **audit})
+        return rf_core.append_entry_in(conn, body.entry_type, body.payload)
 
     try:
         if idempotency_key is None:
@@ -193,7 +201,7 @@ def entries_create(body: EntryBody, response: Response,
         request_hash = _sha(rf_core._canonical_json(
             {'entry_type': body.entry_type, 'payload': body.payload}))
         result, replayed = rf_auth.idempotent_append(principal['id'], idempotency_key,
-                                                     request_hash, do_append)
+                                                     request_hash, do_append_once)
         if replayed:
             response.status_code = 200
             response.headers['Idempotent-Replay'] = 'true'
@@ -203,6 +211,21 @@ def entries_create(body: EntryBody, response: Response,
                             detail='idempotency key reused with a different request') from None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get('/entries/{entry_id}/receipt')
+def entry_receipt(entry_id: int = PathParam(ge=1), anchor_seq: int | None = Query(None, ge=1),
+                  principal: dict = Depends(require('ledger:read'))):
+    """Single-entry inclusion receipt (rf.receipt.v1): proves one entry without the rest."""
+    try:
+        return rf_receipt.build_receipt(rf_core.DATA_DIR, entry_id, anchor_seq)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except rf_receipt.ReceiptUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ValueError, TypeError, OSError):
+        raise HTTPException(status_code=500,
+                            detail='receipt self-check failed; verify ledger integrity') from None
 
 
 @router.get('/evidence/export')

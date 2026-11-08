@@ -23,7 +23,7 @@ def test_demo_all_expectations_hold(capsys):
     assert report['passed'] is True
     checks = {item['check']: item for item in report['results']}
     hybrid = report['post_quantum'] != 'unavailable'
-    assert len(checks) == (10 if hybrid else 8)
+    assert len(checks) == (14 if hybrid else 8)
     pinned = checks['honest bundle, operator pins held externally']
     assert pinned['exit'] == 0 and 'anchor_pinned' in pinned['outcome']
     if hybrid:
@@ -31,6 +31,15 @@ def test_demo_all_expectations_hold(capsys):
         assert 'post-quantum signature invalid' in forger['outcome']
         downgrade = checks['downgrade: strip ML-DSA-65 signatures, re-sign Ed25519, key pins only']
         assert '--require-pq' in downgrade['outcome']
+        honest = checks['receipt: disclose one entry only, operator pin held externally']
+        assert honest['exit'] == 0 and 'anchor_pinned' in honest['outcome']
+        edited = checks['receipt: edit disclosed entry + recompute its hash']
+        assert 'does not reach the signed merkle_root' in edited['outcome']
+        forged = checks['receipt: quantum forger re-roots Merkle tree, re-signs Ed25519, key pins only']
+        assert 'post-quantum signature invalid' in forged['outcome']
+        for name, item in checks.items():
+            if name.startswith('receipt:') and name != honest['check']:
+                assert item['exit'] == 1 and item['outcome'].startswith('REJECTED'), name
     for name, item in checks.items():
         if (name.startswith(('edit', 'delete', 'strip', 'quantum', 'downgrade'))
                 or name.endswith('operator pins')):

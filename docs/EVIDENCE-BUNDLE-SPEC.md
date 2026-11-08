@@ -17,10 +17,17 @@ Members:
   - `rf.anchor.v3` (hybrid, post-quantum) core: v2 core plus `pq_key_id`; carries the Ed25519
     `signature` AND `pq_signature`, an ML-DSA-65 (NIST FIPS 204) signature over the same ASCII
     `anchor_hash` with context string `rf.anchor.v3`. Both signatures must verify.
+  - `rf.anchor.v4` (hybrid with Merkle commitment, written by v0.4.0+) core: v3 core plus `merkle_root`,
+    the RFC 9162 Merkle tree head over entries 1..`ledger_count`: leaf = SHA-256(0x00 || raw 32-byte
+    `entry_hash`), node = SHA-256(0x01 || left || right), empty tree = SHA-256(""), split at the largest
+    power of two below n, odd nodes never duplicated. Ed25519 `signature` and ML-DSA-65 `pq_signature`
+    over the ASCII `anchor_hash`, ML-DSA context string `rf.anchor.v4`. The verifier recomputes every
+    `merkle_root` from the ledger.
   - Legacy anchors (no `key_id`) hash `json.dumps(core, sort_keys=True)` and may not claim `rf.anchor.v3`.
   - Each anchor must satisfy `ledger_head == entry_hash of entry[ledger_count]` and chain to its
     predecessor through `prev_anchor_hash`.
-  - No downgrade: once a v3 anchor appears, every later anchor must be v3.
+  - No downgrade: once a v3 or v4 anchor appears, every later anchor must be v3 or v4; once a v4 anchor
+    appears, every later anchor must be v4.
 - `signing_key.pub.pem`: Ed25519 SPKI PEM. `key_id = "ed25519:" + SHA-256(raw 32-byte public key)`.
 - `signing_key_mldsa65.pub.pem` (v2 only): `pq_key_id = "mldsa65:" + SHA-256(raw 1952-byte public key)`.
 - `manifest.json`: member hashes/sizes and ledger/anchor summary (`pq_key_id` in v2). Integrity metadata
@@ -37,5 +44,24 @@ History is pinned only up to the newest pinned anchor (`pinned_through_entry`); 
 Post-quantum: the newest v3 anchor protects every entry up to its `ledger_count`
 (`pq_protected_through_entry`), because it hash-commits to the ledger head and the whole anchor chain.
 `--require-pq` fails unless the newest anchor is v3; `--pin-pq-key-id` pins the ML-DSA-65 key.
+
+## Single-entry inclusion receipt (rf.receipt.v1)
+
+One canonical JSON object with exactly these fields:
+
+- `schema`: `rf.receipt.v1`.
+- `entry`: one ledger row as in `ledger.jsonl` (`id, ts, entry_type, payload, prev_hash, entry_hash`);
+  `entry_hash` must equal the entry hash recomputed from the row.
+- `leaf_index` (= `id - 1`) and `tree_size` (= the anchor's `ledger_count`, at least `id`).
+- `inclusion_path`: RFC 9162 section 2.1.3.1 audit path, hex SHA-256 node hashes, leaf to root.
+- `anchor`: one complete `rf.anchor.v4` anchor; both signatures must verify with the keys below and the
+  path must lead from the entry's leaf hash to its `merkle_root` (RFC 9162 section 2.1.3.2). When
+  `id == tree_size`, `entry_hash` must also equal `ledger_head`.
+- `signing_key_pem`, `pq_signing_key_pem`: Ed25519 and ML-DSA-65 SPKI PEM; their key ids must match the
+  anchor's `key_id` and `pq_key_id`.
+
+Trust levels are the bundle ones. A receipt is `anchor_pinned` only when a pin names its anchor's `seq`
+and hash; export it against an anchor you have pinned (`--anchor-seq`). It discloses the entry, its
+`prev_hash`, the anchor, and `ceil(log2 n)` interior hashes; no other entry content.
 
 Not covered: entries after the last anchor; truthfulness of what was logged; key compromise before revocation.

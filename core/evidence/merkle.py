@@ -30,10 +30,13 @@ def _levels(leaves: list[str]) -> list[list[str]]:
         current = levels[-1]
         nxt: list[str] = []
 
-        for index in range(0, len(current), 2):
-            left = current[index]
-            right = current[index + 1] if index + 1 < len(current) else left
-            nxt.append(hash_node(left, right))
+        # An odd trailing node is carried up unchanged rather than hashed with a
+        # copy of itself, so no two leaf lists share a root (CVE-2012-2459) and
+        # the tree has the RFC 9162 shape.
+        for index in range(0, len(current) - 1, 2):
+            nxt.append(hash_node(current[index], current[index + 1]))
+        if len(current) & 1:
+            nxt.append(current[-1])
 
         levels.append(nxt)
 
@@ -81,8 +84,6 @@ def build_proof(record_digests: list[str], leaf_index: int) -> MerkleProof:
 
         if sibling_index < len(level):
             siblings.append(level[sibling_index])
-        else:
-            siblings.append(level[index])
 
         index //= 2
 
@@ -103,14 +104,27 @@ def verify_proof(proof: MerkleProof, root_hash: str) -> bool:
 
     current = proof.leaf_hash
     index = proof.leaf_index
+    width = proof.tree_size
+    siblings = iter(proof.siblings)
 
-    for sibling in proof.siblings:
+    while width > 1:
         if index & 1:
+            sibling = next(siblings, None)
+            if sibling is None:
+                return False
             current = hash_node(sibling, current)
-        else:
+        elif index + 1 < width:
+            sibling = next(siblings, None)
+            if sibling is None:
+                return False
             current = hash_node(current, sibling)
+        # else: the last node of an odd level is carried up without a sibling.
 
         index //= 2
+        width = (width + 1) // 2
+
+    if next(siblings, None) is not None:
+        return False
 
     return current == root_hash
 

@@ -17,6 +17,13 @@ from typing import Any, Iterator
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+try:  # imported as core.rf_core (package) or as rf_core (core/ on sys.path)
+    from . import rf_keyseal as _keyseal
+    from . import rf_merkle as _merkle
+except ImportError:
+    import rf_keyseal as _keyseal  # type: ignore[no-redef]
+    import rf_merkle as _merkle  # type: ignore[no-redef]
+
 DATA_DIR = Path(os.environ.get('RF_DATA_DIR', '/data')).resolve()
 DB_PATH = DATA_DIR / 'ledger.db'
 PRIVATE_KEY_PATH = DATA_DIR / 'signing_key.pem'
@@ -35,10 +42,15 @@ MAX_ANCHOR_CHAIN_LENGTH = 1000000
 
 ANCHOR_SCHEMA_V2 = 'rf.anchor.v2'
 ANCHOR_SCHEMA_V3 = 'rf.anchor.v3'
+ANCHOR_SCHEMA_V4 = 'rf.anchor.v4'
+HYBRID_SCHEMAS = (ANCHOR_SCHEMA_V3, ANCHOR_SCHEMA_V4)
 ANCHOR_CORE_LEGACY = ('schema', 'seq', 'created_at', 'ledger_count', 'ledger_head',
                       'prev_anchor_hash')
 ANCHOR_CORE_V2 = ANCHOR_CORE_LEGACY + ('key_id',)
 ANCHOR_CORE_V3 = ANCHOR_CORE_V2 + ('pq_key_id',)
+# v4 = v3 + an RFC 9162 Merkle root over entry hashes 1..ledger_count, so a single
+# entry can be proven with an O(log n) inclusion receipt (rf.receipt.v1).
+ANCHOR_CORE_V4 = ANCHOR_CORE_V3 + ('merkle_root',)
 
 # Post-quantum co-signature: ML-DSA-65 (NIST FIPS 204), domain-separated by
 # context string. v3 anchors are valid only if BOTH signatures verify, so an
@@ -46,6 +58,8 @@ ANCHOR_CORE_V3 = ANCHOR_CORE_V2 + ('pq_key_id',)
 PQ_ALGORITHM = 'ML-DSA-65'
 PQ_KEY_PREFIX = 'mldsa65:'
 PQ_SIGNATURE_CONTEXT = b'rf.anchor.v3'
+# Each hybrid schema signs under its own ML-DSA context string (its schema name).
+PQ_CONTEXTS = {ANCHOR_SCHEMA_V3: b'rf.anchor.v3', ANCHOR_SCHEMA_V4: b'rf.anchor.v4'}
 PQ_MODES = ('auto', 'on', 'off')
 PQ_PRIVATE_KEY_NAME = 'signing_key_mldsa65.pem'
 PQ_PUBLIC_KEY_NAME = 'signing_key_mldsa65.pub.pem'
@@ -126,24 +140,59 @@ def _write_text_atomic(path: Path, value: str, mode: int) -> None:
     _atomic_write(path, value.encode('utf-8'), mode)
 
 
+# Opened sealed keys, keyed by file identity and content digest, so a long-running
+# service pays the memory-hard KDF once per key rather than once per anchor or per
+# /health probe (which would also be a cheap denial-of-service lever).
+_SEALED_KEY_CACHE: dict[tuple[Any, ...], Any] = {}
+_SEALED_KEY_CACHE_LIMIT = 8
+
+
+def _load_private_key_file(path: Path, role: str) -> Any:
+    data = path.read_bytes()
+    if not _keyseal.is_sealed(data):
+        return _keyseal.load_private_key(data, role, None)
+    passphrase = _keyseal.passphrase_from_env()
+    if passphrase is None:
+        return _keyseal.load_private_key(data, role, None)
+    info = path.stat()
+    # Keyed by file identity and the sealed (ciphertext) content only; the passphrase
+    # is never hashed. A hit must present the same passphrase the key was opened
+    # with, compared in constant time, so a changed or wrong passphrase always goes
+    # through full unsealing (and fails there if it is wrong).
+    cache_key = (str(path), info.st_ino, info.st_mtime_ns, role, hashlib.sha256(data).digest())
+    cached = _SEALED_KEY_CACHE.get(cache_key)
+    if cached is not None and secrets.compare_digest(cached[0], passphrase):
+        return cached[1]
+    private = _keyseal.load_private_key(data, role, passphrase)
+    if len(_SEALED_KEY_CACHE) >= _SEALED_KEY_CACHE_LIMIT:
+        _SEALED_KEY_CACHE.clear()
+    _SEALED_KEY_CACHE[cache_key] = (passphrase, private)
+    return private
+
+
+def _store_private_key(path: Path, private: Any, role: str) -> None:
+    blob = _keyseal.serialize_private_key(private, role, _keyseal.passphrase_from_env())
+    _atomic_write(path, blob, 0o600)
+
+
+def key_custody() -> dict[str, Any]:
+    """Non-secret at-rest status of both private signing keys (sealed, plaintext or absent)."""
+    report: dict[str, Any] = {'sealing_required': _keyseal.sealing_required()}
+    for role, path in (('ed25519', PRIVATE_KEY_PATH), ('mldsa65', pq_private_key_path())):
+        report[role] = _keyseal.describe(path.read_bytes()) if path.exists() else {'absent': True}
+    return report
+
+
 def load_or_create_keypair() -> tuple[Ed25519PrivateKey, bytes, str]:
     _secure_directory()
 
     if PRIVATE_KEY_PATH.exists():
-        private = serialization.load_pem_private_key(
-            PRIVATE_KEY_PATH.read_bytes(),
-            password=None,
-        )
+        private = _load_private_key_file(PRIVATE_KEY_PATH, 'ed25519')
         if not isinstance(private, Ed25519PrivateKey):
             raise TypeError('signing key is not Ed25519')
     else:
         private = Ed25519PrivateKey.generate()
-        pem = private.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-        _atomic_write(PRIVATE_KEY_PATH, pem, 0o600)
+        _store_private_key(PRIVATE_KEY_PATH, private, 'ed25519')
 
     public = private.public_key().public_bytes(
         serialization.Encoding.Raw,
@@ -246,7 +295,7 @@ def load_or_create_pq_keypair() -> tuple[Any, str]:
     private_path, public_path = pq_private_key_path(), pq_public_key_path()
 
     if private_path.exists():
-        private = serialization.load_pem_private_key(private_path.read_bytes(), password=None)
+        private = _load_private_key_file(private_path, 'mldsa65')
         if not isinstance(private, mldsa.MLDSA65PrivateKey):
             raise TypeError('post-quantum signing key is not ML-DSA-65')
     else:
@@ -254,12 +303,7 @@ def load_or_create_pq_keypair() -> tuple[Any, str]:
             raise ValueError('post-quantum public key exists without its private key; '
                              'refusing to rotate silently')
         private = mldsa.MLDSA65PrivateKey.generate()
-        pem = private.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-        _atomic_write(private_path, pem, 0o600)
+        _store_private_key(private_path, private, 'mldsa65')
 
     public_raw = _pq_raw(private.public_key())
     if public_path.exists():
@@ -337,67 +381,105 @@ def _entry_material(
     ).encode('utf-8')
 
 
-def append_entry(entry_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _validated_entry(entry_type: str, payload: dict[str, Any]) -> str:
     if not isinstance(entry_type, str) or not entry_type:
         raise ValueError('entry_type must be a non-empty string')
     if len(entry_type) > MAX_ENTRY_TYPE:
         raise ValueError('entry_type exceeds maximum length')
+    return _payload_bytes(payload).decode('utf-8')
 
-    payload_text = _payload_bytes(payload).decode('utf-8')
+
+def _insert_entry(conn: sqlite3.Connection, entry_type: str, payload: dict[str, Any],
+                  payload_text: str) -> dict[str, Any]:
+    """Chain and insert one entry on a connection that already holds the write lock."""
+    row = conn.execute(
+        'SELECT id, entry_hash FROM ledger_entries '
+        'ORDER BY id DESC LIMIT 1'
+    ).fetchone()
+
+    previous_id = int(row[0]) if row else 0
+    previous_hash = str(row[1]) if row else '0' * 64
+    entry_id = previous_id + 1
+    timestamp = _utc_now()
+
+    entry_hash = _sha256(
+        _entry_material(
+            entry_id,
+            previous_hash,
+            timestamp,
+            entry_type,
+            payload_text,
+        )
+    )
+
+    conn.execute(
+        '''
+        INSERT INTO ledger_entries
+            (id, ts, entry_type, payload, prev_hash, entry_hash)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ''',
+        (
+            entry_id,
+            timestamp,
+            entry_type,
+            payload_text,
+            previous_hash,
+            entry_hash,
+        ),
+    )
+
+    return {
+        'id': entry_id,
+        'ts': timestamp,
+        'entry_type': entry_type,
+        'payload': payload,
+        'prev_hash': previous_hash,
+        'entry_hash': entry_hash,
+    }
+
+
+def append_entry(entry_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    payload_text = _validated_entry(entry_type, payload)
 
     conn = _connect()
     try:
         conn.execute('BEGIN IMMEDIATE')
-        row = conn.execute(
-            'SELECT id, entry_hash FROM ledger_entries '
-            'ORDER BY id DESC LIMIT 1'
-        ).fetchone()
-
-        previous_id = int(row[0]) if row else 0
-        previous_hash = str(row[1]) if row else '0' * 64
-        entry_id = previous_id + 1
-        timestamp = _utc_now()
-
-        entry_hash = _sha256(
-            _entry_material(
-                entry_id,
-                previous_hash,
-                timestamp,
-                entry_type,
-                payload_text,
-            )
-        )
-
-        conn.execute(
-            '''
-            INSERT INTO ledger_entries
-                (id, ts, entry_type, payload, prev_hash, entry_hash)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ''',
-            (
-                entry_id,
-                timestamp,
-                entry_type,
-                payload_text,
-                previous_hash,
-                entry_hash,
-            ),
-        )
+        entry = _insert_entry(conn, entry_type, payload, payload_text)
         conn.commit()
-
-        return {
-            'id': entry_id,
-            'ts': timestamp,
-            'entry_type': entry_type,
-            'payload': payload,
-            'prev_hash': previous_hash,
-            'entry_hash': entry_hash,
-        }
+        return entry
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+
+@contextlib.contextmanager
+def write_transaction() -> Iterator[sqlite3.Connection]:
+    """One IMMEDIATE transaction on ledger.db: everything inside commits together or not at all.
+
+    Use append_entry_in() for ledger entries inside it; append_entry() opens its own
+    connection and would wait on this transaction's write lock.
+    """
+    conn = _connect()
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        yield conn
+        conn.execute('COMMIT')
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute('ROLLBACK')
+        raise
+    finally:
+        conn.close()
+
+
+def append_entry_in(conn: sqlite3.Connection, entry_type: str,
+                    payload: dict[str, Any]) -> dict[str, Any]:
+    """Append an entry inside a write_transaction(), atomically with the caller's other writes."""
+    if not conn.in_transaction:
+        raise RuntimeError('append_entry_in requires an open write_transaction()')
+    return _insert_entry(conn, entry_type, payload, _validated_entry(entry_type, payload))
 
 
 def _validate_stored_payload(payload: str) -> None:
@@ -409,10 +491,11 @@ def _validate_stored_payload(payload: str) -> None:
         raise ValueError('stored payload is not an object')
 
 
-def verify_chain() -> tuple[bool, str]:
+def _ledger_snapshot() -> list[tuple[Any, ...]]:
+    """Every ledger row from ONE read (a single SQLite snapshot, even under concurrent appends)."""
     conn = _connect()
     try:
-        rows = conn.execute(
+        return conn.execute(
             '''
             SELECT id, ts, entry_type, payload, prev_hash, entry_hash
             FROM ledger_entries
@@ -422,6 +505,12 @@ def verify_chain() -> tuple[bool, str]:
     finally:
         conn.close()
 
+
+def verify_chain() -> tuple[bool, str]:
+    return _check_chain_rows(_ledger_snapshot())
+
+
+def _check_chain_rows(rows: list[tuple[Any, ...]]) -> tuple[bool, str]:
     expected_id = 1
     expected_previous = '0' * 64
 
@@ -485,12 +574,33 @@ def _anchor_lock() -> Iterator[None]:
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
+class AnchorLogTornError(ValueError):
+    """The anchor log ends in an incomplete line: an append was interrupted (crash, power loss)."""
+
+
+ANCHOR_TORN_MESSAGE = ('anchor log ends with an incomplete line from an interrupted write; '
+                       'run tools/rf_repair_anchor_log.py')
+
+
+def _anchor_log_is_torn() -> bool:
+    with ANCHOR_PATH.open('rb') as handle:
+        if handle.seek(0, os.SEEK_END) == 0:
+            return False
+        handle.seek(-1, os.SEEK_END)
+        return handle.read(1) != b'\n'
+
+
 def _read_anchors() -> list[dict[str, Any]]:
     if not ANCHOR_PATH.exists():
         return []
 
     if ANCHOR_PATH.stat().st_size > MAX_ANCHOR_BYTES:
         raise ValueError('anchor log exceeds maximum size')
+
+    # Every anchor is written as one line ending in a newline. A missing final newline
+    # means an append was cut short; refuse to parse (or append after) a torn tail.
+    if _anchor_log_is_torn():
+        raise AnchorLogTornError(ANCHOR_TORN_MESSAGE)
 
     anchors: list[dict[str, Any]] = []
 
@@ -548,7 +658,7 @@ def _append_anchor_line(anchor: dict[str, Any]) -> None:
 def _select_pq_signer(anchors: list[dict[str, Any]]) -> tuple[Any, str] | None:
     """Decide whether the next anchor is hybrid; refuse any post-quantum downgrade."""
     mode = pq_mode()
-    already_pq = any(item.get('schema') == ANCHOR_SCHEMA_V3 for item in anchors)
+    already_pq = any(item.get('schema') in HYBRID_SCHEMAS for item in anchors)
     if mode == 'off':
         if already_pq:
             raise ValueError('ledger already has post-quantum anchors; '
@@ -567,18 +677,13 @@ def create_anchor() -> dict[str, Any]:
     init_db()
 
     with _anchor_lock():
-        ok, reason = verify_chain()
+        # Verify, take the head and build the Merkle leaves from ONE snapshot, so an
+        # entry written (or forged) after verification can never be signed unverified.
+        rows = _ledger_snapshot()
+        ok, reason = _check_chain_rows(rows)
         if not ok:
             raise ValueError(f'ledger verification failed: {reason}')
-
-        conn = _connect()
-        try:
-            row = conn.execute(
-                'SELECT id, entry_hash FROM ledger_entries '
-                'ORDER BY id DESC LIMIT 1'
-            ).fetchone()
-        finally:
-            conn.close()
+        row = (rows[-1][0], rows[-1][5]) if rows else None
 
         anchors = _read_anchors()
         pq_signer = _select_pq_signer(anchors)
@@ -601,8 +706,9 @@ def create_anchor() -> dict[str, Any]:
             'key_id': key_id,
         }
         if pq_signer is not None:
-            core['schema'] = ANCHOR_SCHEMA_V3
+            core['schema'] = ANCHOR_SCHEMA_V4
             core['pq_key_id'] = pq_signer[1]
+            core['merkle_root'] = _merkle.merkle_root(str(item[5]) for item in rows)
 
         anchor_hash = _canonical_anchor_hash(core)
         signed = anchor_hash.encode('ascii')
@@ -614,7 +720,7 @@ def create_anchor() -> dict[str, Any]:
             'signature': base64.b64encode(signature).decode('ascii'),
         }
         if pq_signer is not None:
-            pq_signature = pq_signer[0].sign(signed, PQ_SIGNATURE_CONTEXT)
+            pq_signature = pq_signer[0].sign(signed, PQ_CONTEXTS[core['schema']])
             anchor['pq_signature'] = base64.b64encode(pq_signature).decode('ascii')
 
         _append_anchor_line(anchor)
@@ -626,6 +732,8 @@ def verify_anchors() -> tuple[bool, str]:
     try:
         _, public, current_key_id = load_or_create_keypair()
         anchors = _read_anchors()
+    except AnchorLogTornError:
+        return False, ANCHOR_TORN_MESSAGE
     except Exception:
         return False, 'anchor verification initialization failed'
 
@@ -635,8 +743,10 @@ def verify_anchors() -> tuple[bool, str]:
     previous_anchor_hash = '0' * 64
     previous_ledger_count = 0
     seen_pq = False
+    seen_merkle = False
     pq_public: tuple[Any, str] | None = None
     ledger_heads: list[str] = []
+    merkle_claims: dict[int, list[tuple[int, str]]] = {}
 
     for index, anchor in enumerate(anchors, 1):
         try:
@@ -664,10 +774,16 @@ def verify_anchors() -> tuple[bool, str]:
             return False, f'ledger count regressed at anchor {index}'
 
         legacy = 'key_id' not in anchor
-        hybrid = anchor.get('schema') == ANCHOR_SCHEMA_V3
+        schema = anchor.get('schema')
+        hybrid = schema in HYBRID_SCHEMAS
+        merkle = schema == ANCHOR_SCHEMA_V4
 
+        if legacy and hybrid:
+            return False, f'anchor {index} claims {schema} without a key identity'
         if seen_pq and not hybrid:
             return False, f'post-quantum downgrade at anchor {index}'
+        if seen_merkle and not merkle:
+            return False, f'merkle commitment downgrade at anchor {index}'
 
         try:
             if legacy:
@@ -676,9 +792,16 @@ def verify_anchors() -> tuple[bool, str]:
             else:
                 if anchor.get('key_id') != current_key_id:
                     return False, f'key identity mismatch at anchor {index}'
-                fields = ANCHOR_CORE_V3 if hybrid else ANCHOR_CORE_V2
+                fields = (ANCHOR_CORE_V4 if merkle else
+                          ANCHOR_CORE_V3 if hybrid else ANCHOR_CORE_V2)
                 core = {key: anchor[key] for key in fields}
                 expected_hash = _canonical_anchor_hash(core)
+                if merkle:
+                    root = anchor['merkle_root']
+                    if not isinstance(root, str) or len(root) != 64 or \
+                            root.strip('0123456789abcdef'):
+                        return False, f'anchor {index} malformed'
+                    merkle_claims.setdefault(ledger_count, []).append((index, root))
         except (KeyError, ValueError):
             return False, f'anchor {index} malformed'
 
@@ -706,10 +829,11 @@ def verify_anchors() -> tuple[bool, str]:
             try:
                 pq_signature = base64.b64decode(anchor['pq_signature'], validate=True)
                 pq_public[0].verify(pq_signature, anchor_hash.encode('ascii'),
-                                    PQ_SIGNATURE_CONTEXT)
+                                    PQ_CONTEXTS[schema])
             except Exception:
                 return False, f'post-quantum signature invalid at anchor {index}'
             seen_pq = True
+            seen_merkle = seen_merkle or merkle
 
         previous_anchor_hash = anchor_hash
         previous_ledger_count = ledger_count
@@ -750,6 +874,19 @@ def verify_anchors() -> tuple[bool, str]:
                         f'anchor {index} ledger head differs from ledger '
                         f'entry {anchored_count}',
                     )
+            if merkle_claims:
+                hashes = [str(item[0]) for item in anchor_conn.execute(
+                    'SELECT entry_hash FROM ledger_entries WHERE id <= ? ORDER BY id ASC',
+                    (max(merkle_claims),),
+                ).fetchall()]
+                try:
+                    roots = _merkle.roots_at(hashes, merkle_claims)
+                except ValueError:
+                    return False, 'merkle commitment references missing ledger entries'
+                for count, claims in merkle_claims.items():
+                    for index, claimed in claims:
+                        if not secrets.compare_digest(roots[count], claimed):
+                            return False, f'merkle root mismatch at anchor {index}'
         finally:
             anchor_conn.close()
     except sqlite3.Error:
@@ -768,6 +905,42 @@ def verify_anchors() -> tuple[bool, str]:
             return False, 'ledger head differs from latest anchor'
 
     return True, f'verified {len(anchors)} anchors'
+
+
+def repair_anchor_log() -> dict[str, Any]:
+    """Recover from an interrupted anchor append without destroying evidence.
+
+    Under the anchor lock: if the log does not end in a newline, the trailing fragment
+    is copied to anchors.torn.<UTC timestamp>.bin (mode 0600) and the log is rewritten
+    atomically, either terminated (the fragment is a complete JSON object that only lost
+    its newline; verify_anchors still checks its hash and signatures) or truncated to its
+    last complete line. The repair is then recorded in the ledger itself as a
+    `maintenance.anchor_log.repaired` entry with the fragment's SHA-256, so the repair is
+    tamper-evident. A log that is not torn is left untouched.
+    """
+    with _anchor_lock():
+        if not ANCHOR_PATH.exists() or not _anchor_log_is_torn():
+            return {'status': 'clean'}
+        raw = ANCHOR_PATH.read_bytes()
+        cut = raw.rfind(b'\n') + 1
+        fragment = raw[cut:]
+        try:
+            complete = isinstance(json.loads(fragment.decode('utf-8')), dict)
+        except ValueError:
+            complete = False
+        stamp = _utc_now().replace(':', '').replace('-', '').replace('.', '')
+        quarantine = DATA_DIR / f'anchors.torn.{stamp}.bin'
+        _atomic_write(quarantine, fragment, 0o600)
+        action = 'terminated' if complete else 'truncated'
+        _atomic_write(ANCHOR_PATH, raw + b'\n' if complete else raw[:cut], 0o600)
+        entry = append_entry('maintenance.anchor_log.repaired', {
+            'action': action,
+            'fragment_bytes': len(fragment),
+            'fragment_sha256': _sha256(fragment),
+            'quarantine': quarantine.name,
+        })
+    return {'status': 'repaired', 'action': action, 'fragment_bytes': len(fragment),
+            'quarantine': str(quarantine), 'ledger_entry': entry['id']}
 
 
 def health() -> dict[str, Any]:

@@ -514,17 +514,18 @@ def test_rf_ledger_head_differs_from_anchor(tmp_path, monkeypatch):
 
 def test_rf_create_anchor_rejects_invalid_ledger(tmp_path, monkeypatch):
     isolate_rf(tmp_path, monkeypatch)
-    monkeypatch.setattr(
-        rf,
-        'verify_chain',
-        lambda: (False, 'bad ledger'),
-    )
+    rf.append_entry('event', {'n': 1})
+    conn = sqlite3.connect(rf.DB_PATH)
+    conn.execute('UPDATE ledger_entries SET payload = ? WHERE id = 1', ('{"n":2}',))
+    conn.commit()
+    conn.close()
 
     with pytest.raises(
         ValueError,
-        match='ledger verification failed: bad ledger',
+        match='ledger verification failed: hash mismatch at 1',
     ):
         rf.create_anchor()
+    assert not rf.ANCHOR_PATH.exists()
 
 
 def test_rf_health_ok_and_degraded(tmp_path, monkeypatch):

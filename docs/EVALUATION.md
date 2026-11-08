@@ -17,6 +17,9 @@ third party can verify offline, without trusting the operator.
 | Exporter | `tools/rf_export_evidence.py` | Writes `rf.evidence.v1` / `rf.evidence.v2` bundles (zip) |
 | Independent verifier | `verifier/rf_verify.py` | Verifies bundles; imports nothing from RightsFrames |
 | Anchor pinning | `tools/rf_pin_anchor.py`, `pins/` | Records anchor hashes outside the operator's control |
+| Merkle tree | `core/rf_merkle.py` | RFC 9162 roots and inclusion paths over entry hashes |
+| Inclusion receipts | `core/rf_receipt.py`, `tools/rf_export_receipt.py` | `rf.receipt.v1`: proves one entry without the rest |
+| Key sealing | `core/rf_keyseal.py`, `tools/rf_seal_keys.py` | `rf.sealed-key.v1`: private keys encrypted at rest |
 | Release provenance | `.github/workflows/slsa-build-l3.yml`, `tools/verify_release_external.sh` | Reproducible release tarball with SLSA provenance |
 
 ## Security model
@@ -33,6 +36,18 @@ third party can verify offline, without trusting the operator.
   holds. Once a ledger has a v3 anchor, the core refuses to write — and the
   verifier refuses to accept — any later non-v3 anchor. `RF_PQ_SIGNING`
   selects `auto` (default: hybrid when available), `on` (require it) or `off`.
+- **Merkle commitment**: from v0.4.0 hybrid anchors are `rf.anchor.v4`, which add
+  `merkle_root`, the RFC 9162 tree head over the entry hashes they cover, and sign
+  under the ML-DSA context `rf.anchor.v4`. Core and verifier recompute every root;
+  after a v4 anchor, a v3 or v2 anchor is a downgrade and fails. Existing v3
+  ledgers keep verifying and continue with v4.
+- **Inclusion receipts**: `rf.receipt.v1` proves one entry against a signed
+  `merkle_root` in O(log n) hashes and discloses no other entry
+  (`verifier/rf_verify.py --receipt`).
+- **Keys at rest**: with `RF_KEY_PASSPHRASE_FILE` (or `RF_KEY_PASSPHRASE`) both
+  private keys are stored as `rf.sealed-key.v1`: Argon2id or scrypt, AES-256-GCM,
+  role and parameters authenticated, hostile parameters rejected before any key
+  derivation. `RF_REQUIRE_SEALED_KEYS=1` refuses plaintext keys.
 - **Bundle manifest**: digests and summaries of the bundle members. It is not
   signed; integrity comes from the content hashes and the signed anchors, and
   the verifier cross-checks every manifest field against them.
@@ -61,7 +76,7 @@ Strict flags for auditors:
        python -m pip install --require-hashes -r core/requirements.txt
        python tools/rf_demo.py
 
-   Ten expectations: an honest bundle verifies as `anchor_pinned`; five
+   Fourteen expectations: an honest bundle verifies as `anchor_pinned`; five
    forgeries are rejected (content edit with stored hashes kept, content edit
    with every hash recomputed, deletion of an anchored entry, stripping of
    all anchors, full history rewrite under an attacker key); the rewrite is
@@ -69,8 +84,11 @@ Strict flags for auditors:
    rejected with no anchor pin at all — a "quantum forger" holding the
    operator's Ed25519 private key (but not the ML-DSA-65 key) who rewrites
    history and re-signs every anchor, and a downgrade that strips the ML-DSA-65
-   signatures. Without ML-DSA support the two post-quantum checks are skipped
-   (eight expectations). Exit status 0 means all held. `--keep DIR` keeps every
+   signatures. Four receipt checks follow: an honest single-entry receipt
+   verifies as `anchor_pinned`; a receipt whose entry is edited and re-hashed,
+   one re-rooted and re-signed by the quantum forger, and an attacker ledger's
+   receipt against the operator pin are rejected. Without ML-DSA support the
+   post-quantum and receipt checks are skipped (eight expectations). Exit status 0 means all held. `--keep DIR` keeps every
    forged bundle for inspection.
 
 2. **Full test suite**:
@@ -91,15 +109,22 @@ Strict flags for auditors:
    byte-for-byte reproduction from the public source tree.
 
 5. **Bundle format**: [EVIDENCE-BUNDLE-SPEC.md](EVIDENCE-BUNDLE-SPEC.md).
-   The verifier is under 500 lines and can be re-implemented independently.
+   The verifier, receipts included, is under 700 lines and can be re-implemented independently.
 
 ## Known limitations
 
 - **No third-party security audit yet.** The claims above are tested by the
   author's adversarial tests and the demo, not by an independent reviewer.
+  [INDEPENDENT-REVIEW-SCOPE.md](INDEPENDENT-REVIEW-SCOPE.md) defines the review
+  that would change this, with the twelve claims it must confirm or refute.
 - **Key custody.** The operator's Ed25519 and ML-DSA-65 private keys live on
-  the operator's host. An attacker with both keys can rewrite history
-  consistently; only anchor pins held elsewhere detect it.
+  the operator's host, sealed at rest when a passphrase is configured. An
+  attacker with both keys (and, if sealed, the passphrase or the running
+  process's memory) can rewrite history consistently; only anchor pins held
+  elsewhere detect it. Hardware-backed keys (HSM, TPM, Android Keystore) are
+  not supported: ML-DSA-65 is not yet available in them.
+- **Key rotation.** A ledger is bound to one Ed25519 and one ML-DSA-65 key
+  pair; there is no signed key-rotation record yet.
 - **Post-quantum scope.** ML-DSA-65 protects anchor signatures. Entry and
   anchor hashing use SHA-256, which keeps a large margin against known quantum
   attacks. Ledgers anchored before upgrading stay Ed25519-only until the first
@@ -107,12 +132,19 @@ Strict flags for auditors:
   `cryptography` without ML-DSA (some Termux packages) fall back to Ed25519
   anchors; once a ledger has hybrid anchors, such a build refuses to anchor or
   verify it rather than downgrade.
+- **Crash consistency.** Ledger entries and credential changes are SQLite
+  transactions (WAL, `synchronous=FULL`). The anchor log is an append-only file: an
+  append cut short by a crash is detected and must be repaired with
+  `tools/rf_repair_anchor_log.py`, which keeps the fragment and records the repair
+  in the ledger.
 - **Unanchored tail.** Entries written after the newest anchor carry no
-  signature until the next anchor is created and pinned.
+  signature, and no inclusion receipt can be issued for them, until the next
+  anchor is created and pinned.
 - **Integrity, not truth.** The ledger proves records were not altered after
   the fact. It does not prove the writing system recorded events truthfully.
 - **Not yet interoperable** with IETF SCITT transparency services or COSE
-  receipts; bundles use the project's own `rf.evidence.v1` format.
+  receipts. The Merkle tree and inclusion proofs follow RFC 9162, but bundles
+  and receipts use the project's own JSON formats.
 - **Solo maintainer.** Response times reflect a one-person project
   (see [SECURITY.md](../SECURITY.md)).
 - **Production Termux stack excluded.** The IDS, threat-intel feeds, backup
