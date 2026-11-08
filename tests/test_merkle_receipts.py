@@ -73,11 +73,11 @@ def _point(mp, base: Path) -> Path:
 
 
 def _jsonl(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in path.read_text(encoding='utf-8').splitlines() if line.strip()]
 
 
 def _dump(path: Path, rows) -> None:
-    path.write_text(''.join(_canon(r) + '\n' for r in rows))
+    path.write_text(''.join(_canon(r) + '\n' for r in rows), encoding='utf-8')
 
 
 def _keys(base: Path):
@@ -123,7 +123,7 @@ def _receipt_file(ledger, entry_id, anchor_seq=None, name=None) -> tuple[Path, d
 
 def _write_receipt(ledger, receipt, name) -> Path:
     path = ledger['tmp'] / name
-    path.write_text(_canon(receipt))
+    path.write_text(_canon(receipt), encoding='utf-8')
     return path
 
 
@@ -318,7 +318,7 @@ def test_receipt_for_every_entry_verifies_and_discloses_nothing_else(ledger):
                                          pin_anchors=[(2, a2['anchor_hash'])],
                                          pin_pq_key_id=a2['pq_key_id'])
         assert report['trust_level'] == 'anchor_pinned' and report['entry_id'] == entry_id
-        text = path.read_text()
+        text = path.read_text(encoding='utf-8')
         rows = _jsonl_ledger(ledger)
         payloads = [json.dumps({'n': n}) for n in range(9) if n != entry_id - 1]
         assert not any(row['entry_hash'] in text for row in rows if row['id'] > 7)
@@ -448,9 +448,9 @@ def test_receipt_tampering_is_rejected(ledger, case, match):
 @needs_pq
 def test_receipt_parsing_limits(ledger):
     path, _ = _receipt_file(ledger, 1)
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     dup = ledger['tmp'] / 'dup.json'
-    dup.write_text('{"schema":"a",' + text[1:])
+    dup.write_text('{"schema":"a",' + text[1:], encoding='utf-8')
     with pytest.raises(verifier.VerificationError, match='duplicate JSON key'):
         verifier.verify_receipt(str(dup))
     big = ledger['tmp'] / 'big.json'

@@ -194,7 +194,7 @@ def test_entry_receipt_endpoint(env, tmp_path):
     receipt = r.json()
     assert receipt['schema'] == 'rf.receipt.v1' and receipt['anchor']['seq'] == anchor['seq']
     path = tmp_path / 'api-receipt.json'
-    path.write_text(json.dumps(receipt))
+    path.write_text(json.dumps(receipt), encoding='utf-8')
     report = verifier.verify_receipt(str(path), pin_anchors=[(anchor['seq'], anchor['anchor_hash'])])
     assert report['trust_level'] == 'anchor_pinned' and report['entry_id'] == 2
     assert env.client.get('/v1/entries/2/receipt', headers=_h(_mk(env, 'no-read', ['entries:write']))
