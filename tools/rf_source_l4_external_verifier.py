@@ -79,7 +79,6 @@ try:
     )
 except Exception as exc:
     check('REPOSITORY_REACHABLE', False, str(exc))
-    repo_data = {}
 
 try:
     branch_data = gh_json(

@@ -144,6 +144,26 @@ pressure). Every change is backed up; `--dry-run` shows them first.
     bash termux/rf-pinnacle.sh             # apply
     bash termux/rf-pinnacle.sh status      # live watchdog view
 
+## Termux Node: Safe Pull and Sync
+
+`termux/rf-sync.sh` updates the node's checkout from GitHub `main` and re-syncs what
+depends on it. It only fast-forwards, refuses a remote other than this repository or
+rewritten history, keeps uncommitted edits (re-applied after the update, or the
+checkout is rolled back exactly if they conflict), retries flaky fetches, holds a wake
+lock, and will not start below 10% battery while discharging. After updating it
+reinstalls the hash-locked dependencies when they changed, byte-compiles the code,
+checks the anchor log for a torn write and verifies the ledger in `RF_DATA_DIR`, and
+restarts any runit services you name.
+
+    bash ~/RightsFrames-Termux/termux/rf-sync.sh --install   # once: adds the rf-sync command
+    rf-sync --dry-run                                         # incoming commits, no changes
+    rf-sync                                                   # pull and sync
+    RF_DATA_DIR=~/rightsframes-data rf-sync --restart rf-api  # also verify ledger, restart a service
+    rf-sync status
+
+Exit codes: 0 synced, 2 local edits conflict (rolled back), 3 histories diverged,
+4 code updated but post-sync verification needs attention, 1 any other error.
+
 ## Honest Limitations
 
 This proves the ledger's integrity, not the security of whatever system

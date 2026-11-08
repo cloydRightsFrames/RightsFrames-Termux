@@ -34,6 +34,12 @@ every release is an annotated tag built, reproduced and attested by
   SHA-256.
 - `docs/INDEPENDENT-REVIEW-SCOPE.md`: statement of work for a narrowly scoped
   independent review of the ledger and verifier, with 12 falsifiable claims.
+- `termux/rf-sync.sh`: safe pull and sync for the Termux node. Fast-forward only, origin
+  pinned to this repository, local edits preserved or the checkout rolled back exactly,
+  fetch retries with backoff, wake lock and low-battery guard, single-run lock; after an
+  update it reinstalls changed hash-locked dependencies, byte-compiles, checks the anchor
+  log and verifies the ledger, and restarts named runit services. Covered by
+  `tests/test_rf_sync.py` against real git repositories.
 
 ### Fixed
 - `create_anchor` verified the chain and then read the ledger head in a separate read,
@@ -53,6 +59,16 @@ every release is an annotated tag built, reproduced and attested by
   of itself, so `[a, b, c]` and `[a, b, c, c]` had the same root (CVE-2012-2459 class).
   Odd nodes are now carried up unchanged (the RFC 9162 tree shape) and proofs check
   their exact length.
+- Code scanning (CodeQL security-and-quality + security-extended) reports no results on
+  `main`; it previously reported 12:
+  - `py/clear-text-logging-sensitive-data` (high) in `tools/rf_apex_enterprise_suite.py`:
+    the reported values were only the paths of files matching credential patterns; the
+    scanner and its output are now named for what they hold, and only paths are printed.
+  - `py/empty-except` (4): intentional best-effort fallbacks now say why.
+  - `py/unused-global-variable` (6): the control-plane CLI default constants were stale
+    (`policy.json` instead of `enterprise/policy.json`) and are now the real argparse
+    defaults; a discarded `git status` result in the provenance verifier is now recorded
+    as `local.worktree_clean`; dead fallback assignments removed.
 
 ## v0.3.0
 

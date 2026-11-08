@@ -73,7 +73,9 @@ def workflow_files():
     p = ROOT / '.github' / 'workflows'
     return sorted(p.glob('*.yml')) + sorted(p.glob('*.yaml'))
 
-def scan_secrets():
+def files_with_credential_patterns():
+    """Tracked files whose content matches a credential pattern. Returns paths only; the
+    matched text is never returned, printed or written to the report."""
     patterns = [
         r'AKIA[0-9A-Z]{16}',
         r'ASIA[0-9A-Z]{16}',
@@ -241,9 +243,10 @@ if docker.exists():
     else:
         result('WARN', 'CONTAINER::HEALTHCHECK')
 
-secret_hits = scan_secrets()
-if secret_hits:
-    result('FAIL', 'SECRETS::TRACKED_SOURCE_SCAN', '; '.join(secret_hits))
+flagged_paths = files_with_credential_patterns()
+if flagged_paths:
+    result('FAIL', 'SECRETS::TRACKED_SOURCE_SCAN',
+           f'{len(flagged_paths)} file(s): ' + '; '.join(flagged_paths))
 else:
     result('PASS', 'SECRETS::TRACKED_SOURCE_SCAN')
 
