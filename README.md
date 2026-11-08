@@ -153,7 +153,8 @@ can rewrite history consistently; only
 anchor hashes pinned outside the operator's infrastructure (`pins/`,
 `--pin-anchor`) detect that. Entries written after the newest anchor are not
 covered by any signature until the next anchor. No third-party security
-audit has been performed yet.
+audit has been performed yet; [docs/INDEPENDENT-REVIEW-SCOPE.md](docs/INDEPENDENT-REVIEW-SCOPE.md)
+is the statement of work for one.
 
 ## License
 

@@ -1,19 +1,26 @@
 """Per-principal credentials, scopes and idempotency for RightsFrames API v1.
 
-Tokens look like rfp1.<principal-id>.<secret>. Only SHA-256(secret) is stored; the secret
-is 256 bits of CSPRNG output, so a fast hash is appropriate. Principal ids are never reused.
-Creation and revocation are written to the evidence ledger in the same transaction scope:
-if the audit entry cannot be written, the change is rolled back.
+Tokens look like rfp1.<principal-id>.<secret>. Only a salted PBKDF2-SHA256 hash of the
+secret is stored. Principal ids are never reused.
+
+Principals and idempotency records live in ledger.db next to the ledger itself, so every
+credential change and its audit entry commit in ONE SQLite transaction: either both are
+durable or neither is, across crashes and power loss. Earlier releases kept them in a
+separate principals.db; it is migrated into ledger.db once, in a single transaction that
+also appends an `auth.store.migrated` ledger entry, and then renamed to
+principals.db.migrated (kept for the operator to inspect and delete).
 """
 from __future__ import annotations
 
 import hashlib
 import hmac
+import contextlib
 import json
+import os
 import re
 import secrets
 import sqlite3
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 import rf_core
 
@@ -49,23 +56,84 @@ class IdempotencyConflict(Exception):
     """Idempotency key reused with a different request."""
 
 
+_AUTH_SCHEMA = (
+    'CREATE TABLE IF NOT EXISTS principals ('
+    'id TEXT PRIMARY KEY, scopes TEXT NOT NULL, label TEXT NOT NULL, '
+    'token_hash TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT)',
+    'CREATE TABLE IF NOT EXISTS idempotency ('
+    'principal_id TEXT NOT NULL, key TEXT NOT NULL, request_hash TEXT NOT NULL, '
+    'response TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (principal_id, key))',
+    'CREATE TABLE IF NOT EXISTS rf_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+)
+LEGACY_DB_NAME = 'principals.db'
+_MIGRATION_KEY = 'auth_store'
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    for statement in _AUTH_SCHEMA:
+        conn.execute(statement)
+
+
+def _migrate_legacy_store(conn: sqlite3.Connection) -> None:
+    """Move a pre-0.4 principals.db into ledger.db exactly once, atomically and audited."""
+    legacy = rf_core.DATA_DIR / LEGACY_DB_NAME
+    if not legacy.exists():
+        return
+    conn.execute('BEGIN IMMEDIATE')
+    try:
+        done = conn.execute('SELECT value FROM rf_meta WHERE key = ?', (_MIGRATION_KEY,)).fetchone()
+        if done is None:
+            source = sqlite3.connect(str(legacy), timeout=5)
+            try:
+                tables = {row[0] for row in source.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'")}
+                principals = source.execute(
+                    'SELECT id, scopes, label, token_hash, created_at, revoked_at FROM principals'
+                ).fetchall() if 'principals' in tables else []
+                idempotency = source.execute(
+                    'SELECT principal_id, key, request_hash, response, created_at FROM idempotency'
+                ).fetchall() if 'idempotency' in tables else []
+            finally:
+                source.close()
+            conn.executemany('INSERT INTO principals (id, scopes, label, token_hash, created_at, '
+                             'revoked_at) VALUES (?, ?, ?, ?, ?, ?)', principals)
+            conn.executemany('INSERT INTO idempotency (principal_id, key, request_hash, response, '
+                             'created_at) VALUES (?, ?, ?, ?, ?)', idempotency)
+            record = {'from': LEGACY_DB_NAME, 'principals': len(principals),
+                      'idempotency_keys': len(idempotency)}
+            rf_core.append_entry_in(conn, 'auth.store.migrated', record)
+            conn.execute('INSERT INTO rf_meta (key, value) VALUES (?, ?)',
+                         (_MIGRATION_KEY, json.dumps({**record, 'at': rf_core._utc_now()},
+                                                     sort_keys=True)))
+        conn.execute('COMMIT')
+    except Exception:
+        _rollback(conn)
+        raise
+    # Committed: retire the legacy file so credentials are not kept in two places.
+    try:
+        os.replace(legacy, legacy.with_name(LEGACY_DB_NAME + '.migrated'))
+    except FileNotFoundError:
+        pass  # another process already retired it
+
+
 def _db() -> sqlite3.Connection:
-    rf_core._secure_directory()
-    conn = sqlite3.connect(str(rf_core.DATA_DIR / 'principals.db'), timeout=5, isolation_level=None)
-    conn.execute('PRAGMA journal_mode=WAL')
-    conn.execute('PRAGMA synchronous=FULL')
-    conn.execute('PRAGMA busy_timeout=5000')
-    conn.execute(
-        'CREATE TABLE IF NOT EXISTS principals ('
-        'id TEXT PRIMARY KEY, scopes TEXT NOT NULL, label TEXT NOT NULL, '
-        'token_hash TEXT NOT NULL, created_at TEXT NOT NULL, revoked_at TEXT)'
-    )
-    conn.execute(
-        'CREATE TABLE IF NOT EXISTS idempotency ('
-        'principal_id TEXT NOT NULL, key TEXT NOT NULL, request_hash TEXT NOT NULL, '
-        'response TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (principal_id, key))'
-    )
+    """Connection to ledger.db with the auth tables present (autocommit; reads only)."""
+    conn = rf_core._connect()
+    try:
+        _ensure_schema(conn)
+        _migrate_legacy_store(conn)
+    except Exception:
+        conn.close()
+        raise
     return conn
+
+
+@contextlib.contextmanager
+def _write() -> Iterator[sqlite3.Connection]:
+    """One IMMEDIATE transaction on ledger.db covering auth rows and ledger entries."""
+    _db().close()  # schema and one-time migration, before taking the write lock
+    with rf_core.write_transaction() as conn:
+        yield conn
 
 
 def _rollback(conn: sqlite3.Connection) -> None:
@@ -100,9 +168,7 @@ def create_principal(principal_id: str, scopes: Any, label: str = '', actor: str
     secret = secrets.token_urlsafe(32)
     salt_hex, token_hash = _new_token_hash(secret)
     stored_hash = f'pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt_hex}${token_hash}'
-    conn = _db()
-    try:
-        conn.execute('BEGIN IMMEDIATE')
+    with _write() as conn:
         try:
             conn.execute(
                 'INSERT INTO principals (id, scopes, label, token_hash, created_at, revoked_at) '
@@ -111,15 +177,9 @@ def create_principal(principal_id: str, scopes: Any, label: str = '', actor: str
             )
         except sqlite3.IntegrityError:
             raise Conflict('principal already exists') from None
-        rf_core.append_entry('auth.principal.created', {
+        rf_core.append_entry_in(conn, 'auth.principal.created', {
             'principal': principal_id, 'scopes': scope_list, 'label': label, 'actor': actor,
         })
-        conn.execute('COMMIT')
-    except Exception:
-        _rollback(conn)
-        raise
-    finally:
-        conn.close()
     return f'{TOKEN_PREFIX}.{principal_id}.{secret}'
 
 
@@ -182,9 +242,7 @@ def list_principals() -> list[dict[str, Any]]:
 
 
 def revoke_principal(principal_id: str, actor: str) -> None:
-    conn = _db()
-    try:
-        conn.execute('BEGIN IMMEDIATE')
+    with _write() as conn:
         row = conn.execute(
             'SELECT scopes, revoked_at FROM principals WHERE id = ?', (principal_id,)
         ).fetchone()
@@ -201,47 +259,33 @@ def revoke_principal(principal_id: str, actor: str) -> None:
                 raise Conflict('cannot revoke the last active admin')
         conn.execute('UPDATE principals SET revoked_at = ? WHERE id = ?',
                      (rf_core._utc_now(), principal_id))
-        rf_core.append_entry('auth.principal.revoked', {'principal': principal_id, 'actor': actor})
-        conn.execute('COMMIT')
-    except Exception:
-        _rollback(conn)
-        raise
-    finally:
-        conn.close()
+        rf_core.append_entry_in(conn, 'auth.principal.revoked',
+                                {'principal': principal_id, 'actor': actor})
 
 
 def idempotent_append(principal_id: str, key: str, request_hash: str,
-                      action: Callable[[], dict[str, Any]]) -> tuple[dict[str, Any], bool]:
-    """Run action() at most once per (principal, key). Returns (result, replayed).
+                      action: Callable[[sqlite3.Connection], dict[str, Any]]
+                      ) -> tuple[dict[str, Any], bool]:
+    """Run action(conn) at most once per (principal, key). Returns (result, replayed).
 
-    Residual risk: if the process dies after action() commits to the ledger but before the
-    idempotency row commits, a retry appends a second entry. The ledger itself is never
-    corrupted; the duplicate is visible and attributable via the audit entries.
+    action receives the open ledger.db write transaction and must write its entries with
+    rf_core.append_entry_in(conn, ...). Its entries and the idempotency record commit
+    together, so a crash at any point leaves either all of them or none: a retry after
+    a crash can never append a second copy.
     """
-    conn = _db()
-    try:
-        conn.execute('BEGIN IMMEDIATE')
+    with _write() as conn:
         row = conn.execute(
             'SELECT request_hash, response FROM idempotency WHERE principal_id = ? AND key = ?',
             (principal_id, key),
         ).fetchone()
         if row is not None:
-            conn.execute('COMMIT')
             if not hmac.compare_digest(row[0], request_hash):
                 raise IdempotencyConflict()
             return json.loads(row[1]), True
-        result = action()
+        result = action(conn)
         conn.execute(
             'INSERT INTO idempotency (principal_id, key, request_hash, response, created_at) '
             'VALUES (?, ?, ?, ?, ?)',
             (principal_id, key, request_hash, json.dumps(result, sort_keys=True), rf_core._utc_now()),
         )
-        conn.execute('COMMIT')
-        return result, False
-    except IdempotencyConflict:
-        raise
-    except Exception:
-        _rollback(conn)
-        raise
-    finally:
-        conn.close()
+    return result, False

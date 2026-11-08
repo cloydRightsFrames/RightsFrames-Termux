@@ -16,3 +16,7 @@ Scopes: `entries:write`, `ledger:read`, `anchor:create`, `evidence:export`, `adm
 | GET/POST/DELETE | /v1/principals[/id] | admin:principals | token returned once; last admin cannot be revoked |
 
 Writes append `audit.api` (principal, action, payload digest) before acting. Reads are not ledger-audited.
+With `Idempotency-Key`, the `audit.api` entry, the new entry and the idempotency record commit in one
+transaction: a retry after a crash never appends twice. Principal creation and revocation commit together
+with their `auth.principal.*` ledger entries. Principals are stored in `ledger.db`; a pre-0.4 `principals.db`
+is migrated once on first use and renamed `principals.db.migrated`.

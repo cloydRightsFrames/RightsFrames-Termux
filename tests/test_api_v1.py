@@ -151,7 +151,7 @@ def test_failed_auth_throttle(env):
 
 def test_secret_never_stored(env):
     secret = env.admin.split('.')[2].encode()
-    for path in (rf_core.DATA_DIR).glob('principals.db*'):
+    for path in (rf_core.DATA_DIR).glob('*.db*'):
         assert secret not in path.read_bytes()
 
 

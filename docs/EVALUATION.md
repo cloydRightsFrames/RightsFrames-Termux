@@ -115,6 +115,8 @@ Strict flags for auditors:
 
 - **No third-party security audit yet.** The claims above are tested by the
   author's adversarial tests and the demo, not by an independent reviewer.
+  [INDEPENDENT-REVIEW-SCOPE.md](INDEPENDENT-REVIEW-SCOPE.md) defines the review
+  that would change this, with the twelve claims it must confirm or refute.
 - **Key custody.** The operator's Ed25519 and ML-DSA-65 private keys live on
   the operator's host, sealed at rest when a passphrase is configured. An
   attacker with both keys (and, if sealed, the passphrase or the running
@@ -130,6 +132,11 @@ Strict flags for auditors:
   `cryptography` without ML-DSA (some Termux packages) fall back to Ed25519
   anchors; once a ledger has hybrid anchors, such a build refuses to anchor or
   verify it rather than downgrade.
+- **Crash consistency.** Ledger entries and credential changes are SQLite
+  transactions (WAL, `synchronous=FULL`). The anchor log is an append-only file: an
+  append cut short by a crash is detected and must be repaired with
+  `tools/rf_repair_anchor_log.py`, which keeps the fragment and records the repair
+  in the ledger.
 - **Unanchored tail.** Entries written after the newest anchor carry no
   signature, and no inclusion receipt can be issued for them, until the next
   anchor is created and pinned.

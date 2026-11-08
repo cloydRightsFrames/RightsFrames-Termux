@@ -381,67 +381,105 @@ def _entry_material(
     ).encode('utf-8')
 
 
-def append_entry(entry_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _validated_entry(entry_type: str, payload: dict[str, Any]) -> str:
     if not isinstance(entry_type, str) or not entry_type:
         raise ValueError('entry_type must be a non-empty string')
     if len(entry_type) > MAX_ENTRY_TYPE:
         raise ValueError('entry_type exceeds maximum length')
+    return _payload_bytes(payload).decode('utf-8')
 
-    payload_text = _payload_bytes(payload).decode('utf-8')
+
+def _insert_entry(conn: sqlite3.Connection, entry_type: str, payload: dict[str, Any],
+                  payload_text: str) -> dict[str, Any]:
+    """Chain and insert one entry on a connection that already holds the write lock."""
+    row = conn.execute(
+        'SELECT id, entry_hash FROM ledger_entries '
+        'ORDER BY id DESC LIMIT 1'
+    ).fetchone()
+
+    previous_id = int(row[0]) if row else 0
+    previous_hash = str(row[1]) if row else '0' * 64
+    entry_id = previous_id + 1
+    timestamp = _utc_now()
+
+    entry_hash = _sha256(
+        _entry_material(
+            entry_id,
+            previous_hash,
+            timestamp,
+            entry_type,
+            payload_text,
+        )
+    )
+
+    conn.execute(
+        '''
+        INSERT INTO ledger_entries
+            (id, ts, entry_type, payload, prev_hash, entry_hash)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ''',
+        (
+            entry_id,
+            timestamp,
+            entry_type,
+            payload_text,
+            previous_hash,
+            entry_hash,
+        ),
+    )
+
+    return {
+        'id': entry_id,
+        'ts': timestamp,
+        'entry_type': entry_type,
+        'payload': payload,
+        'prev_hash': previous_hash,
+        'entry_hash': entry_hash,
+    }
+
+
+def append_entry(entry_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    payload_text = _validated_entry(entry_type, payload)
 
     conn = _connect()
     try:
         conn.execute('BEGIN IMMEDIATE')
-        row = conn.execute(
-            'SELECT id, entry_hash FROM ledger_entries '
-            'ORDER BY id DESC LIMIT 1'
-        ).fetchone()
-
-        previous_id = int(row[0]) if row else 0
-        previous_hash = str(row[1]) if row else '0' * 64
-        entry_id = previous_id + 1
-        timestamp = _utc_now()
-
-        entry_hash = _sha256(
-            _entry_material(
-                entry_id,
-                previous_hash,
-                timestamp,
-                entry_type,
-                payload_text,
-            )
-        )
-
-        conn.execute(
-            '''
-            INSERT INTO ledger_entries
-                (id, ts, entry_type, payload, prev_hash, entry_hash)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ''',
-            (
-                entry_id,
-                timestamp,
-                entry_type,
-                payload_text,
-                previous_hash,
-                entry_hash,
-            ),
-        )
+        entry = _insert_entry(conn, entry_type, payload, payload_text)
         conn.commit()
-
-        return {
-            'id': entry_id,
-            'ts': timestamp,
-            'entry_type': entry_type,
-            'payload': payload,
-            'prev_hash': previous_hash,
-            'entry_hash': entry_hash,
-        }
+        return entry
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+
+@contextlib.contextmanager
+def write_transaction() -> Iterator[sqlite3.Connection]:
+    """One IMMEDIATE transaction on ledger.db: everything inside commits together or not at all.
+
+    Use append_entry_in() for ledger entries inside it; append_entry() opens its own
+    connection and would wait on this transaction's write lock.
+    """
+    conn = _connect()
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        yield conn
+        conn.execute('COMMIT')
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute('ROLLBACK')
+        raise
+    finally:
+        conn.close()
+
+
+def append_entry_in(conn: sqlite3.Connection, entry_type: str,
+                    payload: dict[str, Any]) -> dict[str, Any]:
+    """Append an entry inside a write_transaction(), atomically with the caller's other writes."""
+    if not conn.in_transaction:
+        raise RuntimeError('append_entry_in requires an open write_transaction()')
+    return _insert_entry(conn, entry_type, payload, _validated_entry(entry_type, payload))
 
 
 def _validate_stored_payload(payload: str) -> None:
@@ -453,10 +491,11 @@ def _validate_stored_payload(payload: str) -> None:
         raise ValueError('stored payload is not an object')
 
 
-def verify_chain() -> tuple[bool, str]:
+def _ledger_snapshot() -> list[tuple[Any, ...]]:
+    """Every ledger row from ONE read (a single SQLite snapshot, even under concurrent appends)."""
     conn = _connect()
     try:
-        rows = conn.execute(
+        return conn.execute(
             '''
             SELECT id, ts, entry_type, payload, prev_hash, entry_hash
             FROM ledger_entries
@@ -466,6 +505,12 @@ def verify_chain() -> tuple[bool, str]:
     finally:
         conn.close()
 
+
+def verify_chain() -> tuple[bool, str]:
+    return _check_chain_rows(_ledger_snapshot())
+
+
+def _check_chain_rows(rows: list[tuple[Any, ...]]) -> tuple[bool, str]:
     expected_id = 1
     expected_previous = '0' * 64
 
@@ -529,12 +574,33 @@ def _anchor_lock() -> Iterator[None]:
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
+class AnchorLogTornError(ValueError):
+    """The anchor log ends in an incomplete line: an append was interrupted (crash, power loss)."""
+
+
+ANCHOR_TORN_MESSAGE = ('anchor log ends with an incomplete line from an interrupted write; '
+                       'run tools/rf_repair_anchor_log.py')
+
+
+def _anchor_log_is_torn() -> bool:
+    with ANCHOR_PATH.open('rb') as handle:
+        if handle.seek(0, os.SEEK_END) == 0:
+            return False
+        handle.seek(-1, os.SEEK_END)
+        return handle.read(1) != b'\n'
+
+
 def _read_anchors() -> list[dict[str, Any]]:
     if not ANCHOR_PATH.exists():
         return []
 
     if ANCHOR_PATH.stat().st_size > MAX_ANCHOR_BYTES:
         raise ValueError('anchor log exceeds maximum size')
+
+    # Every anchor is written as one line ending in a newline. A missing final newline
+    # means an append was cut short; refuse to parse (or append after) a torn tail.
+    if _anchor_log_is_torn():
+        raise AnchorLogTornError(ANCHOR_TORN_MESSAGE)
 
     anchors: list[dict[str, Any]] = []
 
@@ -606,38 +672,18 @@ def _select_pq_signer(anchors: list[dict[str, Any]]) -> tuple[Any, str] | None:
         raise ValueError(f'post-quantum anchor signing unavailable: {exc}') from exc
 
 
-def _entry_hashes_through(last_id: int) -> list[str]:
-    """Entry hashes 1..last_id in order (the Merkle leaves an anchor commits to)."""
-    conn = _connect()
-    try:
-        rows = conn.execute(
-            'SELECT id, entry_hash FROM ledger_entries WHERE id <= ? ORDER BY id ASC',
-            (last_id,),
-        ).fetchall()
-    finally:
-        conn.close()
-    if len(rows) != last_id or (rows and int(rows[-1][0]) != last_id):
-        raise ValueError('ledger is missing entries below the anchored head')
-    return [str(row[1]) for row in rows]
-
-
 def create_anchor() -> dict[str, Any]:
     private, public, key_id = load_or_create_keypair()
     init_db()
 
     with _anchor_lock():
-        ok, reason = verify_chain()
+        # Verify, take the head and build the Merkle leaves from ONE snapshot, so an
+        # entry written (or forged) after verification can never be signed unverified.
+        rows = _ledger_snapshot()
+        ok, reason = _check_chain_rows(rows)
         if not ok:
             raise ValueError(f'ledger verification failed: {reason}')
-
-        conn = _connect()
-        try:
-            row = conn.execute(
-                'SELECT id, entry_hash FROM ledger_entries '
-                'ORDER BY id DESC LIMIT 1'
-            ).fetchone()
-        finally:
-            conn.close()
+        row = (rows[-1][0], rows[-1][5]) if rows else None
 
         anchors = _read_anchors()
         pq_signer = _select_pq_signer(anchors)
@@ -662,7 +708,7 @@ def create_anchor() -> dict[str, Any]:
         if pq_signer is not None:
             core['schema'] = ANCHOR_SCHEMA_V4
             core['pq_key_id'] = pq_signer[1]
-            core['merkle_root'] = _merkle.merkle_root(_entry_hashes_through(last_id))
+            core['merkle_root'] = _merkle.merkle_root(str(item[5]) for item in rows)
 
         anchor_hash = _canonical_anchor_hash(core)
         signed = anchor_hash.encode('ascii')
@@ -686,6 +732,8 @@ def verify_anchors() -> tuple[bool, str]:
     try:
         _, public, current_key_id = load_or_create_keypair()
         anchors = _read_anchors()
+    except AnchorLogTornError:
+        return False, ANCHOR_TORN_MESSAGE
     except Exception:
         return False, 'anchor verification initialization failed'
 
@@ -857,6 +905,42 @@ def verify_anchors() -> tuple[bool, str]:
             return False, 'ledger head differs from latest anchor'
 
     return True, f'verified {len(anchors)} anchors'
+
+
+def repair_anchor_log() -> dict[str, Any]:
+    """Recover from an interrupted anchor append without destroying evidence.
+
+    Under the anchor lock: if the log does not end in a newline, the trailing fragment
+    is copied to anchors.torn.<UTC timestamp>.bin (mode 0600) and the log is rewritten
+    atomically, either terminated (the fragment is a complete JSON object that only lost
+    its newline; verify_anchors still checks its hash and signatures) or truncated to its
+    last complete line. The repair is then recorded in the ledger itself as a
+    `maintenance.anchor_log.repaired` entry with the fragment's SHA-256, so the repair is
+    tamper-evident. A log that is not torn is left untouched.
+    """
+    with _anchor_lock():
+        if not ANCHOR_PATH.exists() or not _anchor_log_is_torn():
+            return {'status': 'clean'}
+        raw = ANCHOR_PATH.read_bytes()
+        cut = raw.rfind(b'\n') + 1
+        fragment = raw[cut:]
+        try:
+            complete = isinstance(json.loads(fragment.decode('utf-8')), dict)
+        except ValueError:
+            complete = False
+        stamp = _utc_now().replace(':', '').replace('-', '').replace('.', '')
+        quarantine = DATA_DIR / f'anchors.torn.{stamp}.bin'
+        _atomic_write(quarantine, fragment, 0o600)
+        action = 'terminated' if complete else 'truncated'
+        _atomic_write(ANCHOR_PATH, raw + b'\n' if complete else raw[:cut], 0o600)
+        entry = append_entry('maintenance.anchor_log.repaired', {
+            'action': action,
+            'fragment_bytes': len(fragment),
+            'fragment_sha256': _sha256(fragment),
+            'quarantine': quarantine.name,
+        })
+    return {'status': 'repaired', 'action': action, 'fragment_bytes': len(fragment),
+            'quarantine': str(quarantine), 'ledger_entry': entry['id']}
 
 
 def health() -> dict[str, Any]:

@@ -180,12 +180,18 @@ def anchors_create(principal: dict = Depends(require('anchor:create'))):
 def entries_create(body: EntryBody, response: Response,
                    principal: dict = Depends(require('entries:write')),
                    idempotency_key: str | None = Header(default=None)):
+    audit = {'entry_type': body.entry_type,
+             'payload_sha256': _sha(rf_core._canonical_json(body.payload))}
+
     def do_append() -> dict[str, Any]:
-        _audit(principal, 'entries.append', {
-            'entry_type': body.entry_type,
-            'payload_sha256': _sha(rf_core._canonical_json(body.payload)),
-        })
+        _audit(principal, 'entries.append', audit)
         return rf_core.append_entry(body.entry_type, body.payload)
+
+    def do_append_once(conn: Any) -> dict[str, Any]:
+        # Audit record, entry and idempotency record commit in one transaction.
+        rf_core.append_entry_in(conn, 'audit.api',
+                                {'principal': principal['id'], 'action': 'entries.append', **audit})
+        return rf_core.append_entry_in(conn, body.entry_type, body.payload)
 
     try:
         if idempotency_key is None:
@@ -195,7 +201,7 @@ def entries_create(body: EntryBody, response: Response,
         request_hash = _sha(rf_core._canonical_json(
             {'entry_type': body.entry_type, 'payload': body.payload}))
         result, replayed = rf_auth.idempotent_append(principal['id'], idempotency_key,
-                                                     request_hash, do_append)
+                                                     request_hash, do_append_once)
         if replayed:
             response.status_code = 200
             response.headers['Idempotent-Replay'] = 'true'

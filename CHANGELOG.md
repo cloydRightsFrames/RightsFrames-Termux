@@ -27,7 +27,28 @@ every release is an annotated tag built, reproduced and attested by
   used to force repeated memory-hard key derivations.
 - Demo: four receipt checks (14 expectations with ML-DSA-65).
 
+- `tools/rf_repair_anchor_log.py` / `rf_core.repair_anchor_log()`: recover from an
+  interrupted anchor append. The trailing fragment is kept as `anchors.torn.<UTC>.bin`
+  (0600), the log is truncated to its last complete anchor (or terminated, if only the
+  newline was lost), and the repair is recorded in the ledger with the fragment's
+  SHA-256.
+- `docs/INDEPENDENT-REVIEW-SCOPE.md`: statement of work for a narrowly scoped
+  independent review of the ledger and verifier, with 12 falsifiable claims.
+
 ### Fixed
+- `create_anchor` verified the chain and then read the ledger head in a separate read,
+  so an entry inserted in between could be signed into an anchor without having been
+  verified. Verification, head and Merkle leaves now come from one snapshot.
+- A torn final line in `anchors.jsonl` (crash or power loss mid-append) made anchoring
+  and verification fail with an opaque JSON error, and nothing prevented the next
+  append from being glued onto the fragment. It is now detected before any parse or
+  append and reported with the repair command.
+- Credential changes and idempotent writes committed to `principals.db` and
+  `ledger.db` in separate transactions, so a crash between them could leave an audit
+  entry without its change, or append a second entry on an idempotent retry. The auth
+  tables now live in `ledger.db` and each change commits with its audit entries in one
+  transaction. An existing `principals.db` is migrated once, atomically, with an
+  `auth.store.migrated` ledger entry, and renamed to `principals.db.migrated`.
 - `core/merkle.py` and `core/evidence/merkle.py` paired an odd trailing node with a copy
   of itself, so `[a, b, c]` and `[a, b, c, c]` had the same root (CVE-2012-2459 class).
   Odd nodes are now carried up unchanged (the RFC 9162 tree shape) and proofs check
