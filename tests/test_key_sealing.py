@@ -372,3 +372,17 @@ def test_seal_tool_argument_errors(tmp_path, monkeypatch, capsys):
     monkeypatch.setitem(rf_keyseal._ARGON2_PROBE, 'ok', False)
     assert seal_tool.main(['--data-dir', str(empty), '--kdf', 'argon2id']) == 1
     assert 'Argon2id is not available' in capsys.readouterr().err
+
+
+def test_cached_sealed_key_is_not_returned_for_a_different_passphrase(tmp_path, monkeypatch):
+    _point(monkeypatch, tmp_path / 'data')
+    monkeypatch.setenv(rf_keyseal.ENV_PASSPHRASE, PASS.decode())
+    _, public, _ = rf_core.load_or_create_keypair()
+    assert rf_core.load_or_create_keypair()[1] == public  # opened and cached
+    monkeypatch.setenv(rf_keyseal.ENV_PASSPHRASE, 'a different passphrase!!')
+    with pytest.raises(rf_keyseal.SealedKeyError, match='wrong key passphrase'):
+        rf_core.load_or_create_keypair()
+    monkeypatch.setenv(rf_keyseal.ENV_PASSPHRASE, PASS.decode())
+    assert rf_core.load_or_create_keypair()[1] == public
+    assert all(PASS not in key and PASS.decode() not in repr(key)
+               for key in rf_core._SEALED_KEY_CACHE)

@@ -155,15 +155,18 @@ def _load_private_key_file(path: Path, role: str) -> Any:
     if passphrase is None:
         return _keyseal.load_private_key(data, role, None)
     info = path.stat()
-    cache_key = (str(path), info.st_ino, info.st_mtime_ns, role,
-                 hashlib.sha256(data).digest(), hashlib.sha256(passphrase).digest())
+    # Keyed by file identity and the sealed (ciphertext) content only; the passphrase
+    # is never hashed. A hit must present the same passphrase the key was opened
+    # with, compared in constant time, so a changed or wrong passphrase always goes
+    # through full unsealing (and fails there if it is wrong).
+    cache_key = (str(path), info.st_ino, info.st_mtime_ns, role, hashlib.sha256(data).digest())
     cached = _SEALED_KEY_CACHE.get(cache_key)
-    if cached is not None:
-        return cached
+    if cached is not None and secrets.compare_digest(cached[0], passphrase):
+        return cached[1]
     private = _keyseal.load_private_key(data, role, passphrase)
     if len(_SEALED_KEY_CACHE) >= _SEALED_KEY_CACHE_LIMIT:
         _SEALED_KEY_CACHE.clear()
-    _SEALED_KEY_CACHE[cache_key] = private
+    _SEALED_KEY_CACHE[cache_key] = (passphrase, private)
     return private
 
 
