@@ -71,6 +71,8 @@ def _secure_directory() -> None:
         # Reviewed false positive: 0700 grants owner-only directory access and traversal; 0644 would be unsafe.
         os.chmod(DATA_DIR, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
     except OSError:
+        # Best effort: filesystems without POSIX modes (FAT/exFAT on Android shared
+        # storage, some Windows volumes) reject chmod; the directory still works.
         pass
 
 
@@ -124,6 +126,8 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
         try:
             os.chmod(path, mode)
         except OSError:
+            # Best effort: the mode was already applied with fchmod before the data
+            # was written; this repeat only matters where fchmod is unavailable.
             pass
         if os.name == 'posix':
             dir_fd = os.open(str(DATA_DIR), os.O_RDONLY)

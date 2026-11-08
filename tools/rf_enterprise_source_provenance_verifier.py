@@ -130,7 +130,6 @@ try:
     )
 except Exception as e:
     check('REPOSITORY_METADATA', False, {'error': str(e)})
-    repo = {}
 
 try:
     remote_main, _, rc = run(
@@ -532,13 +531,15 @@ for pycache in ROOT.rglob('__pycache__'):
             try:
                 child.unlink()
             except OSError:
-                pass
+                # Cache cleanup is cosmetic; a locked or vanished file is harmless.
+                continue
         try:
             pycache.rmdir()
         except OSError:
-            pass
+            # Not empty (a file could not be removed) or already gone: leave it.
+            continue
 
-out, err, rc = run(
+worktree_status, _, worktree_rc = run(
     'git',
     'status',
     '--porcelain'
@@ -554,7 +555,8 @@ report_data = {
     'local': {
         'branch': local_branch,
         'head': local_head,
-        'tree': local_tree
+        'tree': local_tree,
+        'worktree_clean': worktree_rc == 0 and not worktree_status.strip()
     },
     'remote': {
         'main': remote_main_sha

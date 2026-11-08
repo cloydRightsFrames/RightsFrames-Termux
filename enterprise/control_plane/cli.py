@@ -12,8 +12,8 @@ from .audit import AuditLog
 from .health import readiness
 from .policy import evaluate, load_policy
 
-_DEFAULT_POLICY = Path("policy.json")
-_DEFAULT_AUDIT = Path("audit.json")
+_DEFAULT_POLICY = Path("enterprise/policy.json")
+_DEFAULT_AUDIT = Path(".rightsframes-enterprise/audit.jsonl")
 _COMMANDS = ("policy", "evaluate", "audit-verify", "readiness")
 _HEX = frozenset("0123456789abcdefABCDEF")
 
@@ -21,8 +21,8 @@ _HEX = frozenset("0123456789abcdefABCDEF")
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=list(_COMMANDS))
-    parser.add_argument("--policy", default="enterprise/policy.json")
-    parser.add_argument("--audit", default=".rightsframes-enterprise/audit.jsonl")
+    parser.add_argument("--policy", default=str(_DEFAULT_POLICY))
+    parser.add_argument("--audit", default=str(_DEFAULT_AUDIT))
     args = parser.parse_args()
 
     if args.command == "audit-verify":
