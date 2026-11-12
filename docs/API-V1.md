@@ -12,6 +12,7 @@ Scopes: `entries:write`, `ledger:read`, `anchor:create`, `evidence:export`, `adm
 | POST | /v1/anchors | anchor:create | audited first |
 | POST | /v1/entries | entries:write | optional `Idempotency-Key` (8-128 chars); replay returns 200 |
 | GET | /v1/entries/{id}/receipt?anchor_seq | ledger:read | rf.receipt.v1 inclusion receipt; 409 until a v4 anchor covers the entry |
+| GET | /v1/anchors/{seq}/consistency?to_seq | ledger:read | rf.consistency.v1 append-only proof from anchor `seq` to `to_seq` (default newest), no entries; 404 unknown anchor, 409 if `to_seq` is not later or either anchor is not v4 |
 | GET | /v1/evidence/export | evidence:export | rf.evidence.v1 / v2 zip; audited first |
 | GET/POST/DELETE | /v1/principals[/id] | admin:principals | token returned once; last admin cannot be revoked |
 

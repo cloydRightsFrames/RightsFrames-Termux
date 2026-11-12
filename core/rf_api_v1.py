@@ -21,6 +21,7 @@ from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field
 
 import rf_auth
+import rf_consistency
 import rf_core
 import rf_receipt
 
@@ -226,6 +227,21 @@ def entry_receipt(entry_id: int = PathParam(ge=1), anchor_seq: int | None = Quer
     except (ValueError, TypeError, OSError):
         raise HTTPException(status_code=500,
                             detail='receipt self-check failed; verify ledger integrity') from None
+
+
+@router.get('/anchors/{seq}/consistency')
+def anchor_consistency(seq: int = PathParam(ge=1), to_seq: int | None = Query(None, ge=1),
+                       principal: dict = Depends(require('ledger:read'))):
+    """Append-only proof (rf.consistency.v1) from anchor `seq` to a later one; no entry disclosed."""
+    try:
+        return rf_consistency.build_consistency_proof(rf_core.DATA_DIR, seq, to_seq)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except rf_consistency.ConsistencyUnavailable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ValueError, TypeError, OSError):
+        raise HTTPException(status_code=500,
+                            detail='consistency self-check failed; verify ledger integrity') from None
 
 
 @router.get('/evidence/export')

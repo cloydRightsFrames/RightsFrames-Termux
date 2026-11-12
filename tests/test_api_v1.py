@@ -204,3 +204,42 @@ def test_entry_receipt_endpoint(env, tmp_path):
     assert env.client.get('/v1/entries/2/receipt', headers=_h(reader),
                           params={'anchor_seq': 99}).status_code == 404
     assert env.client.get('/v1/entries/999/receipt', headers=_h(reader)).status_code == 409
+
+
+def test_anchor_consistency_endpoint(env, tmp_path):
+    reader = _mk(env, 'consistency-reader', ['ledger:read'])
+    url = '/v1/anchors/1/consistency'
+    assert env.client.get(url, headers=_h(reader)).status_code == 404
+    anchors = []
+    for batch in range(3):
+        for n in range(3):
+            assert env.client.post('/v1/entries', headers=_h(env.admin), json={
+                'entry_type': 'evt', 'payload': {'batch': batch, 'n': n}}).status_code == 201
+        anchors.append(env.client.post('/v1/anchors', headers=_h(env.admin)).json())
+    assert anchors[0]['schema'] == 'rf.anchor.v4'
+    r = env.client.get(url, headers=_h(reader))
+    assert r.status_code == 200, r.text
+    proof = r.json()
+    assert proof['schema'] == 'rf.consistency.v1'
+    assert proof['first_anchor'] == anchors[0] and proof['second_anchor'] == anchors[2]
+    assert 'batch' not in r.text
+    path = tmp_path / 'api-consistency.json'
+    path.write_text(json.dumps(proof), encoding='utf-8')
+    report = verifier.verify_consistency(
+        str(path), pin_anchors=[(anchors[0]['seq'], anchors[0]['anchor_hash'])])
+    assert report['trust_level'] == 'anchor_pinned'
+    assert report['next_pin'] == f"3:{anchors[2]['anchor_hash']}"
+    middle = env.client.get(url, headers=_h(reader), params={'to_seq': 2})
+    assert middle.status_code == 200 and middle.json()['second_anchor'] == anchors[1]
+    assert env.client.get(url, headers=_h(_mk(env, 'no-read-c', ['entries:write']))).status_code == 403
+    assert env.client.get(url).status_code == 401
+    assert env.client.get('/v1/anchors/0/consistency', headers=_h(reader)).status_code == 422
+    assert env.client.get(url, headers=_h(reader), params={'to_seq': 0}).status_code == 422
+    assert env.client.get(url, headers=_h(reader), params={'to_seq': 99}).status_code == 404
+    assert env.client.get('/v1/anchors/99/consistency', headers=_h(reader)).status_code == 404
+    late = env.client.get('/v1/anchors/3/consistency', headers=_h(reader))
+    assert late.status_code == 409 and 'not later' in late.json()['detail']
+    (rf_core.DATA_DIR / 'signing_key.pub.pem').write_bytes(
+        (rf_core.DATA_DIR / 'signing_key_mldsa65.pub.pem').read_bytes())
+    broken = env.client.get(url, headers=_h(reader))
+    assert broken.status_code == 500 and 'self-check failed' in broken.json()['detail']

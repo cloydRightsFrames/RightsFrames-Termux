@@ -46,6 +46,7 @@ described — with the test scripts included in this repo.
 | Ed25519 signatures | Forgery, even with full database access | Signature check against a public key only |
 | ML-DSA-65 co-signature (`rf.anchor.v3`, `rf.anchor.v4`) | Forgery by an attacker who can break or steal Ed25519 | Both signatures must verify; downgrade is rejected |
 | RFC 9162 Merkle root in every hybrid anchor (`rf.anchor.v4`) | Proving one entry without exposing the others | O(log n) inclusion receipt, `rf_verify.py --receipt` |
+| RFC 9162 consistency proof between two anchors (`rf.consistency.v1`) | History rewritten behind an anchor someone already pinned | O(log n) append-only proof with no entries in it, `rf_verify.py --consistency` |
 | Signing keys sealed at rest (`rf.sealed-key.v1`) | Key theft from disks, backups and copies of the data directory | Argon2id/scrypt + AES-256-GCM; `RF_REQUIRE_SEALED_KEYS=1` fails closed |
 
 ## Prove One Entry, Disclose Nothing Else
@@ -62,6 +63,24 @@ The API serves the same receipt at `GET /v1/entries/{id}/receipt` (scope
 `ledger:read`). The verifier rejects any edit to the entry, the path, the root or
 either signature; a receipt re-signed with a stolen Ed25519 key fails the
 ML-DSA-65 check, and one forged with both keys fails against the pinned anchor.
+
+## Prove Nothing Was Rewritten, Disclose No Entry
+
+An auditor, customer or regulator who pinned an anchor at the last review can check
+everything written since without being given a single record. A consistency proof
+carries the two signed anchors and an RFC 9162 consistency path (about 2*log2(n)
+hashes at most) showing that the newer ledger is the older one with entries appended:
+
+    python tools/rf_export_consistency.py --data-dir /data --from-seq 3 --out since-3.json
+    python verifier/rf_verify.py since-3.json --consistency --pin-anchor 3:HASH
+
+The API serves the same proof at `GET /v1/anchors/{seq}/consistency` (scope
+`ledger:read`). The verifier checks both hybrid signatures and that the path
+reproduces both signed Merkle roots, then prints `next_pin`, the newer anchor to hold
+from now on. Each review therefore starts from the pin the last one ended with, and a
+receipt against the newer anchor is then checked against a pin the reviewer derived
+rather than one the operator supplied. A ledger rewritten by someone holding both
+signing keys cannot be made consistent with a pin taken before the rewrite.
 
 ## Signing Keys Sealed at Rest
 
