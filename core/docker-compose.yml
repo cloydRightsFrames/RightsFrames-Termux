@@ -6,6 +6,9 @@ services:
     environment:
       RF_API_KEY: ${RF_API_KEY:-}
       RF_ALLOWED_HOSTS: ${RF_ALLOWED_HOSTS:-127.0.0.1,localhost}
+      # Seconds one /health verification is shared by all callers (0 to 300;
+      # 0 verifies the whole ledger on every probe).
+      RF_HEALTH_CACHE_SECONDS: ${RF_HEALTH_CACHE_SECONDS:-5}
       # Signing keys sealed at rest (core/rf_keyseal.py). Mount the passphrase file
       # owned by uid 10001 with mode 0600 and point RF_KEY_PASSPHRASE_FILE at it;
       # RF_REQUIRE_SEALED_KEYS=1 then refuses plaintext keys.

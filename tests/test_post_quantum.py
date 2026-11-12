@@ -159,8 +159,12 @@ def test_core_creates_and_verifies_hybrid_anchors(hybrid):
     a1 = hybrid['a1']
     assert a1['schema'] == 'rf.anchor.v4'
     assert a1['pq_key_id'].startswith('mldsa65:')
-    hashes = [row[0] for row in rf_core._connect().execute(
-        'SELECT entry_hash FROM ledger_entries ORDER BY id').fetchall()]
+    conn = rf_core._connect()
+    try:
+        hashes = [row[0] for row in conn.execute(
+            'SELECT entry_hash FROM ledger_entries ORDER BY id').fetchall()]
+    finally:
+        conn.close()
     assert a1['merkle_root'] == rf_merkle.merkle_root(hashes[:3])
     assert hybrid['a2']['merkle_root'] == rf_merkle.merkle_root(hashes)
     assert len(base64.b64decode(a1['pq_signature'])) == 3309
