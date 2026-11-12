@@ -149,8 +149,9 @@ pressure). Every change is backed up; `--dry-run` shows them first.
 `termux/rf-sync.sh` updates the node's checkout from GitHub `main` and re-syncs what
 depends on it. It only fast-forwards, refuses a remote other than this repository or
 rewritten history, keeps uncommitted edits (re-applied after the update, or the
-checkout is rolled back exactly if they conflict), retries flaky fetches, holds a wake
-lock, and will not start below 10% battery while discharging. After updating it
+checkout is rolled back exactly if they conflict), retries flaky fetches, takes the
+Termux wake lock and leaves it held for the stack (`RF_SYNC_RELEASE_WAKE_LOCK=1`
+releases it afterwards), and will not start below 10% battery while discharging. After updating it
 reinstalls the hash-locked dependencies when they changed, byte-compiles the code,
 checks the anchor log for a torn write and verifies the ledger in `RF_DATA_DIR`, and
 restarts any runit services you name.

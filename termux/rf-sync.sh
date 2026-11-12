@@ -21,8 +21,12 @@
 #      update, the checkout is rolled back to the exact pre-sync commit with the
 #      edits restored, and the run reports it (exit 2). Nothing is ever discarded.
 #    * Flaky links. Fetches retry with exponential backoff (2, 4, 8, 16 s).
-#    * Power. Holds a Termux wake lock while running; refuses to start below
-#      RF_SYNC_MIN_BATTERY percent (default 10) while discharging, unless --force.
+#    * Power. Takes the Termux wake lock for the run and leaves it held; refuses
+#      to start below RF_SYNC_MIN_BATTERY percent (default 10) while discharging,
+#      unless --force. Termux has ONE wake lock and it is not counted: releasing
+#      it here would also release the lock termux/rf-pinnacle.sh holds for the
+#      stack, and Doze could then freeze the node. Set RF_SYNC_RELEASE_WAKE_LOCK=1
+#      on a phone that does not run the stack to release it when the run ends.
 #    * One at a time. A lock prevents concurrent runs; a stale lock is reclaimed.
 #
 #  After a successful update it:
@@ -42,7 +46,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly RF_SYNC_VERSION="1.0.0"
+readonly RF_SYNC_VERSION="1.0.1"
 readonly EXPECTED_REPO="cloydRightsFrames/RightsFrames-Termux"
 
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
@@ -51,6 +55,7 @@ RF_SYNC_BRANCH="${RF_SYNC_BRANCH:-main}"
 RF_SYNC_HOME="${RF_SYNC_HOME:-$HOME/.rightsframes/sync}"
 RF_SYNC_MIN_BATTERY="${RF_SYNC_MIN_BATTERY:-10}"
 RF_SYNC_RETRIES="${RF_SYNC_RETRIES:-4}"
+RF_SYNC_RELEASE_WAKE_LOCK="${RF_SYNC_RELEASE_WAKE_LOCK:-0}"
 LOG_FILE="$RF_SYNC_HOME/rf-sync.log"
 LOCK_DIR="$RF_SYNC_HOME/lock"
 PYTHON="${PYTHON:-python3}"
@@ -107,6 +112,9 @@ while (($#)); do
   shift
 done
 
+[[ $RF_SYNC_RELEASE_WAKE_LOCK == 0 || $RF_SYNC_RELEASE_WAKE_LOCK == 1 ]] \
+  || die "RF_SYNC_RELEASE_WAKE_LOCK must be 0 or 1"
+
 mkdir -p "$RF_SYNC_HOME"
 
 g() { git -C "$RF_REPO_DIR" "$@"; }
@@ -156,7 +164,9 @@ restore_on_error() {
 cleanup() {
   local status=$?
   log "END rc=$status"
-  if ((WAKE_LOCK_TAKEN)) && command -v termux-wake-unlock >/dev/null 2>&1; then
+  # Released only on request: the lock is shared with the running stack (see header).
+  if ((WAKE_LOCK_TAKEN)) && [[ $RF_SYNC_RELEASE_WAKE_LOCK == 1 ]] \
+      && command -v termux-wake-unlock >/dev/null 2>&1; then
     termux-wake-unlock >/dev/null 2>&1 || true
   fi
   release_lock
@@ -212,7 +222,14 @@ check_power() {
     ok "Battery" "${pct}% ${plugged:-}"
   fi
   if command -v termux-wake-lock >/dev/null 2>&1; then
-    termux-wake-lock >/dev/null 2>&1 && WAKE_LOCK_TAKEN=1 && ok "Wake lock" "held for this run"
+    if termux-wake-lock >/dev/null 2>&1; then
+      WAKE_LOCK_TAKEN=1
+      if [[ $RF_SYNC_RELEASE_WAKE_LOCK == 1 ]]; then
+        ok "Wake lock" "held for this run"
+      else
+        ok "Wake lock" "held; left held for the stack"
+      fi
+    fi
   fi
 }
 

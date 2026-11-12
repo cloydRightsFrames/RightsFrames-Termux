@@ -69,6 +69,15 @@ every release is an annotated tag built, reproduced and attested by
     (`policy.json` instead of `enterprise/policy.json`) and are now the real argparse
     defaults; a discarded `git status` result in the provenance verifier is now recorded
     as `local.worktree_clean`; dead fallback assignments removed.
+- `termux/rf-sync.sh` (1.0.1) released the Termux wake lock when it finished. Termux has
+  one wake lock and does not count holders, so every sync also released the lock
+  `termux/rf-pinnacle.sh` holds for the stack, leaving the node open to being frozen by
+  Doze. The lock is now left held; `RF_SYNC_RELEASE_WAKE_LOCK=1` restores the release
+  for a phone that does not run the stack.
+- `tests/test_rf_sync.py` never ran on the node it tests: Python 3.13 and later report
+  Termux as `android`, and the tests were skipped unless the platform was `linux`. They
+  now run on both, and use stand-ins for the Termux battery and wake-lock commands so a
+  test run on a live node cannot touch the real ones.
 
 ## v0.3.0
 
