@@ -19,9 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'termux' / 'rf-sync.sh'
 GITHUB_URL = 'https://github.com/cloydRightsFrames/RightsFrames-Termux.git'
 
+BASH = shutil.which('bash')
+# Python reports Termux as 'android' (3.13 and later) or 'linux' (earlier).
 pytestmark = pytest.mark.skipif(
-    sys.platform != 'linux' or shutil.which('bash') is None or shutil.which('git') is None,
-    reason='rf-sync targets Termux (Linux bash and git)')
+    sys.platform not in ('linux', 'android') or BASH is None or shutil.which('git') is None,
+    reason='rf-sync targets Termux (Linux or Android, with bash and git)')
 
 
 def _git_env(home: Path) -> dict[str, str]:
@@ -48,6 +50,13 @@ class World:
         self.env = _git_env(self.home)
         self.env['PATH'] = f'{self.bin}:{os.environ["PATH"]}'
         self.env['PREFIX'] = str(tmp / 'prefix')
+        # On a real node the Termux commands exist. Stand-ins come first on PATH so a
+        # test run never reads the real battery or touches the stack's wake lock.
+        self.wake_log = tmp / 'wake.log'
+        self.stub('termux-battery-status',
+                  'echo \'{"percentage": 100, "plugged": "PLUGGED_AC"}\'\n')
+        self.stub('termux-wake-lock', f'echo lock >> {self.wake_log}\n')
+        self.stub('termux-wake-unlock', f'echo unlock >> {self.wake_log}\n')
         self.bare = tmp / 'github.git'
         self.upstream = tmp / 'upstream'
         self.node = tmp / 'node'
@@ -79,7 +88,8 @@ class World:
 
     def stub(self, name: str, body: str) -> None:
         path = self.bin / name
-        path.write_text('#!/usr/bin/env bash\n' + body, encoding='utf-8')
+        # Absolute interpreter path: Termux has no /usr/bin/env.
+        path.write_text(f'#!{BASH}\n' + body, encoding='utf-8')
         path.chmod(0o755)
 
     def run(self, *args: str, **extra_env: str) -> subprocess.CompletedProcess:
@@ -204,20 +214,69 @@ def test_missing_repo_and_bad_arguments(world):
     assert 'repository not found' in world.run(RF_REPO_DIR=str(world.tmp / 'nope')).stderr
     assert world.run('--bogus').returncode == 1
     assert world.run('--restart', 'bad name!').returncode == 1
-    assert 'rf-sync 1.0.0' in world.run('--version').stdout
+    assert 'rf-sync 1.0.1' in world.run('--version').stdout
     assert 'Fast-forward only' in world.run('--help').stdout
 
 
-def test_low_battery_is_refused_unless_forced_and_wake_lock_is_released(world):
+def test_low_battery_is_refused_unless_forced(world):
     world.stub('termux-battery-status', 'echo \'{"percentage": 5, "plugged": "UNPLUGGED"}\'\n')
-    marks = world.tmp / 'wake.log'
-    world.stub('termux-wake-lock', f'echo lock >> {marks}\n')
-    world.stub('termux-wake-unlock', f'echo unlock >> {marks}\n')
     r = world.run()
     assert r.returncode == 1 and 'battery at 5%' in r.stderr
+    assert not world.wake_log.exists()  # refused before the wake lock is taken
     forced = world.run('--force')
     assert forced.returncode == 0, forced.stderr
-    assert marks.read_text().split() == ['lock', 'unlock']
+    assert world.wake_log.read_text().split() == ['lock']
+
+
+def test_wake_lock_is_left_held_for_the_stack(world):
+    # Termux has one uncounted wake lock, shared with the stack rf-pinnacle.sh starts:
+    # a sync that released it would let Doze freeze the node.
+    r = world.run()
+    assert r.returncode == 0, r.stderr
+    assert 'left held for the stack' in r.stdout
+    assert world.wake_log.read_text().split() == ['lock']
+
+
+def test_wake_lock_is_left_held_when_the_run_fails(world):
+    world.commit_upstream('upstream', {'a.txt': '1\n'})
+    (world.node / 'local.txt').write_text('local\n', encoding='utf-8')
+    _git(world.env, world.node, 'add', 'local.txt')
+    _git(world.env, world.node, 'commit', '--quiet', '-m', 'local commit')
+    assert world.run().returncode == 3
+    assert world.wake_log.read_text().split() == ['lock']
+
+
+def test_wake_lock_is_released_on_request(world):
+    r = world.run(RF_SYNC_RELEASE_WAKE_LOCK='1')
+    assert r.returncode == 0, r.stderr
+    assert 'held for this run' in r.stdout
+    assert world.wake_log.read_text().split() == ['lock', 'unlock']
+    failed = world.run('--bogus', RF_SYNC_RELEASE_WAKE_LOCK='1')
+    assert failed.returncode == 1
+    assert world.wake_log.read_text().split() == ['lock', 'unlock']  # never taken, never released
+
+
+def test_invalid_wake_lock_setting_is_refused(world):
+    r = world.run(RF_SYNC_RELEASE_WAKE_LOCK='yes')
+    assert r.returncode == 1 and 'RF_SYNC_RELEASE_WAKE_LOCK must be 0 or 1' in r.stderr
+    assert not world.wake_log.exists()
+
+
+def test_dry_run_and_status_do_not_take_the_wake_lock(world):
+    assert world.run('--dry-run').returncode == 0
+    assert world.run('status').returncode == 0
+    assert not world.wake_log.exists()
+
+
+def test_battery_check_is_skipped_without_termux_api(world):
+    for name in ('termux-battery-status', 'termux-wake-lock', 'termux-wake-unlock'):
+        (world.bin / name).unlink()
+    if shutil.which('termux-battery-status', path=world.env['PATH']):
+        pytest.skip('Termux:API is installed on this device')
+    r = world.run()
+    assert r.returncode == 0, r.stderr
+    assert 'Termux:API not installed' in r.stdout
+    assert not world.wake_log.exists()
 
 
 def test_fetch_retries_then_fails_cleanly(world):
