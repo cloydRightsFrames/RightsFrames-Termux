@@ -12,7 +12,10 @@ The tree shape is the RFC 9162 one (split at the largest power of two below N); 
 node is never duplicated, so two different leaf lists cannot share a root
 (CVE-2012-2459 class ambiguity). An inclusion path for leaf m in a tree of size N
 lets anyone holding only that entry, the path and a signed root prove membership in
-O(log N) hashes without seeing any other entry.
+O(log N) hashes without seeing any other entry. A consistency path between tree sizes
+m <= N lets anyone holding only the two signed roots prove that the larger tree is the
+smaller one with entries appended (nothing before m edited, removed or reordered),
+again in O(log N) hashes and without seeing any entry.
 
 This module imports nothing from RightsFrames. verifier/rf_verify.py carries its own
 independent re-implementation of the verification half.
@@ -176,3 +179,101 @@ def verify_inclusion(entry_hash: str, index: int, size: int, path: Sequence[str]
     except ValueError:
         return False
     return isinstance(root, str) and computed == root
+
+
+def consistency_path(entry_hashes: Sequence[str], first_size: int) -> list[str]:
+    """RFC 9162 section 2.1.4.1 PROOF(m, D[n]): tree of `first_size` leaves -> the full tree.
+
+    Empty when first_size is 0 (the empty tree is a prefix of every tree) or equals the
+    full size (the roots must then be equal).
+    """
+    size = len(entry_hashes)
+    if not isinstance(first_size, int) or isinstance(first_size, bool) \
+            or not 0 <= first_size <= size:
+        raise ValueError('first tree size outside the tree')
+    if first_size in (0, size):
+        return []
+    leaves = [leaf_hash(item) for item in entry_hashes]
+    path: list[bytes] = []
+    lo, hi, m, whole = 0, size, first_size, True
+    # Iterative SUBPROOF: descend towards the boundary between old and new leaves,
+    # collecting the sibling subtree at every level (emitted leaf-most first).
+    while m != hi - lo:
+        split = _largest_power_of_two_below(hi - lo)
+        if m <= split:
+            path.append(_subtree_root(leaves, lo + split, hi))
+            hi = lo + split
+        else:
+            path.append(_subtree_root(leaves, lo, lo + split))
+            lo, m, whole = lo + split, m - split, False
+    if not whole:
+        path.append(_subtree_root(leaves, lo, hi))
+    return [item.hex() for item in reversed(path)]
+
+
+def roots_from_consistency_path(first_size: int, second_size: int, path: Sequence[str],
+                                first_root: str) -> tuple[str, str]:
+    """RFC 9162 section 2.1.4.2: the (first, second) roots implied by a consistency path.
+
+    Raises ValueError for any structurally invalid proof. `first_root` is needed
+    because the proof omits it when the first tree is a complete subtree of the second.
+    """
+    for value in (first_size, second_size):
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError('tree sizes must be integers')
+    if not 0 < first_size < second_size:
+        raise ValueError('consistency path needs 0 < first size < second size')
+    if not isinstance(first_root, str) or not _HEX64.match(first_root):
+        raise ValueError('first root is malformed')
+    if not isinstance(path, (list, tuple)) or not path or len(path) > MAX_PATH_LENGTH:
+        raise ValueError('consistency path is malformed')
+    nodes: list[bytes] = []
+    for item in path:
+        if not isinstance(item, str) or not _HEX64.match(item):
+            raise ValueError('consistency path element is malformed')
+        nodes.append(bytes.fromhex(item))
+    if first_size & (first_size - 1) == 0:
+        nodes.insert(0, bytes.fromhex(first_root))
+    fn, sn = first_size - 1, second_size - 1
+    while fn & 1:
+        fn >>= 1
+        sn >>= 1
+    fr = sr = nodes[0]
+    for sibling in nodes[1:]:
+        if sn == 0:
+            raise ValueError('consistency path is longer than the trees require')
+        if fn & 1 or fn == sn:
+            fr = node_hash(sibling, fr)
+            sr = node_hash(sibling, sr)
+            while fn and not fn & 1:
+                fn >>= 1
+                sn >>= 1
+        else:
+            sr = node_hash(sr, sibling)
+        fn >>= 1
+        sn >>= 1
+    if sn != 0:
+        raise ValueError('consistency path is shorter than the trees require')
+    return fr.hex(), sr.hex()
+
+
+def verify_consistency(first_size: int, second_size: int, path: Sequence[str],
+                       first_root: str, second_root: str) -> bool:
+    """True only if the tree of `second_size` leaves extends the tree of `first_size` leaves."""
+    if not isinstance(first_root, str) or not isinstance(second_root, str) \
+            or not _HEX64.match(first_root) or not _HEX64.match(second_root):
+        return False
+    for value in (first_size, second_size):
+        if not isinstance(value, int) or isinstance(value, bool):
+            return False
+    if not isinstance(path, (list, tuple)):
+        return False
+    if first_size == 0:
+        return second_size >= 0 and not path and first_root == EMPTY_ROOT
+    if first_size == second_size:
+        return not path and first_root == second_root
+    try:
+        computed = roots_from_consistency_path(first_size, second_size, path, first_root)
+    except ValueError:
+        return False
+    return computed == (first_root, second_root)

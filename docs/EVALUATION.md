@@ -19,6 +19,7 @@ third party can verify offline, without trusting the operator.
 | Anchor pinning | `tools/rf_pin_anchor.py`, `pins/` | Records anchor hashes outside the operator's control |
 | Merkle tree | `core/rf_merkle.py` | RFC 9162 roots and inclusion paths over entry hashes |
 | Inclusion receipts | `core/rf_receipt.py`, `tools/rf_export_receipt.py` | `rf.receipt.v1`: proves one entry without the rest |
+| Consistency proofs | `core/rf_consistency.py`, `tools/rf_export_consistency.py` | `rf.consistency.v1`: proves a later anchor only appended to an earlier one, with no entries |
 | Key sealing | `core/rf_keyseal.py`, `tools/rf_seal_keys.py` | `rf.sealed-key.v1`: private keys encrypted at rest |
 | Release provenance | `.github/workflows/slsa-build-l3.yml`, `tools/verify_release_external.sh` | Reproducible release tarball with SLSA provenance |
 
@@ -44,6 +45,14 @@ third party can verify offline, without trusting the operator.
 - **Inclusion receipts**: `rf.receipt.v1` proves one entry against a signed
   `merkle_root` in O(log n) hashes and discloses no other entry
   (`verifier/rf_verify.py --receipt`).
+- **Consistency proofs**: `rf.consistency.v1` carries two `rf.anchor.v4` anchors and an
+  RFC 9162 consistency path between their signed `merkle_root`s. The verifier checks
+  both hybrid signatures and that the path reproduces both roots, which holds only if
+  the later ledger is the earlier one with entries appended. It contains no entry. A
+  pin for the earlier anchor makes the result `anchor_pinned`, and `next_pin` names the
+  later anchor (`verifier/rf_verify.py --consistency`). It does not show that the
+  later anchor's `ledger_head` or any entry content is correct; a bundle or receipt
+  checked against the new pin does that.
 - **Keys at rest**: with `RF_KEY_PASSPHRASE_FILE` (or `RF_KEY_PASSPHRASE`) both
   private keys are stored as `rf.sealed-key.v1`: Argon2id or scrypt, AES-256-GCM,
   role and parameters authenticated, hostile parameters rejected before any key
@@ -109,7 +118,7 @@ Strict flags for auditors:
    byte-for-byte reproduction from the public source tree.
 
 5. **Bundle format**: [EVIDENCE-BUNDLE-SPEC.md](EVIDENCE-BUNDLE-SPEC.md).
-   The verifier, receipts included, is under 700 lines and can be re-implemented independently.
+   The verifier, receipts and consistency proofs included, is under 900 lines and can be re-implemented independently.
 
 ## Known limitations
 
@@ -144,7 +153,10 @@ Strict flags for auditors:
   the fact. It does not prove the writing system recorded events truthfully.
 - **Not yet interoperable** with IETF SCITT transparency services or COSE
   receipts. The Merkle tree and inclusion proofs follow RFC 9162, but bundles
-  and receipts use the project's own JSON formats.
+  and receipts use the project's own JSON formats. Consistency proofs are produced by
+  the operator on request; there is no independent witness that cosigns anchors, so
+  showing different histories to different pin holders is detected only when they
+  compare pins.
 - **Solo maintainer.** Response times reflect a one-person project
   (see [SECURITY.md](../SECURITY.md)).
 - **Production Termux stack excluded.** The IDS, threat-intel feeds, backup

@@ -24,6 +24,12 @@ Trust levels reported (exit code 0 ONLY for anchor_pinned):
                   its predecessor and commits to a ledger head, so pinning the newest
                   anchor pins the whole anchored ledger prefix.
 Entries after the last anchor are NOT protected; they are reported as unanchored.
+
+--receipt verifies an rf.receipt.v1 single-entry inclusion receipt. --consistency
+verifies an rf.consistency.v1 append-only proof: the ledger signed by a later anchor
+is the ledger signed by an earlier one with entries appended, shown with an RFC 9162
+consistency path and no ledger entry. A holder of a pin for the earlier anchor learns
+that nothing it covered was edited, removed or reordered, and gets the next pin.
 """
 from __future__ import annotations
 
@@ -74,6 +80,10 @@ RECEIPT_SCHEMA = 'rf.receipt.v1'
 RECEIPT_KEYS = frozenset({'schema', 'entry', 'leaf_index', 'tree_size', 'inclusion_path',
                           'anchor', 'signing_key_pem', 'pq_signing_key_pem'})
 MAX_RECEIPT_BYTES = 4 * 1024 * 1024
+CONSISTENCY_SCHEMA = 'rf.consistency.v1'
+CONSISTENCY_KEYS = frozenset({'schema', 'first_anchor', 'second_anchor', 'consistency_path',
+                              'signing_key_pem', 'pq_signing_key_pem'})
+EMPTY_MERKLE_ROOT = hashlib.sha256(b'').hexdigest()
 MAX_PATH_LENGTH = 64
 
 
@@ -250,6 +260,44 @@ def _root_from_path(entry_hash: str, index: int, size: int, path: list[Any]) -> 
     if sn != 0:
         _fail('receipt inclusion path is shorter than the tree requires')
     return digest.hex()
+
+
+def _roots_from_consistency_path(first_size: int, second_size: int, path: list[Any],
+                                 first_root: str) -> tuple[str, str]:
+    """RFC 9162 section 2.1.4.2 for 0 < first_size < second_size: the two roots a path implies."""
+    if not path:
+        _fail('consistency path is empty but the second anchor covers more entries')
+    if len(path) > MAX_PATH_LENGTH:
+        _fail('consistency path is too long')
+    nodes: list[bytes] = []
+    for item in path:
+        if not isinstance(item, str) or not _HEX64.match(item):
+            _fail('consistency path element is malformed')
+        nodes.append(bytes.fromhex(item))
+    if first_size & (first_size - 1) == 0:
+        # The first tree is a complete subtree of the second; its root is not repeated.
+        nodes.insert(0, bytes.fromhex(first_root))
+    fn, sn = first_size - 1, second_size - 1
+    while fn & 1:
+        fn >>= 1
+        sn >>= 1
+    first = second = nodes[0]
+    for sibling in nodes[1:]:
+        if sn == 0:
+            _fail('consistency path is longer than the trees require')
+        if fn & 1 or fn == sn:
+            first = _mt_node(sibling, first)
+            second = _mt_node(sibling, second)
+            while not fn & 1 and fn:
+                fn >>= 1
+                sn >>= 1
+        else:
+            second = _mt_node(second, sibling)
+        fn >>= 1
+        sn >>= 1
+    if sn != 0:
+        _fail('consistency path is shorter than the trees require')
+    return first.hex(), second.hex()
 
 
 def _verify_manifest(members: dict[str, bytes]) -> dict[str, Any]:
@@ -549,6 +597,22 @@ def _receipt_key(pem: Any, loader: Any, what: str) -> tuple[Any, str]:
     return loader(data)
 
 
+def _read_document(path: str, what: str) -> Any:
+    """Read one size-limited, strictly parsed JSON document (a receipt or a consistency proof)."""
+    try:
+        with open(path, 'rb') as handle:
+            raw = handle.read(MAX_RECEIPT_BYTES + 1)
+    except OSError as exc:
+        _fail(f'cannot read {what}: {exc}')
+    if len(raw) > MAX_RECEIPT_BYTES:
+        _fail(f'{what} exceeds size limit')
+    try:
+        text = raw.decode('utf-8')
+    except UnicodeDecodeError:
+        _fail(f'{what} is not UTF-8')
+    return _loads(text)
+
+
 def verify_receipt(path: str, pin_key_id: str | None = None,
                    pin_anchors: Sequence[tuple[int, str]] = (),
                    pin_pq_key_id: str | None = None) -> dict[str, Any]:
@@ -559,18 +623,7 @@ def verify_receipt(path: str, pin_key_id: str | None = None,
     without disclosing any other entry. Trust levels match bundle verification; the
     receipt is anchor_pinned only when a --pin-anchor names its anchor's seq and hash.
     """
-    try:
-        with open(path, 'rb') as handle:
-            raw = handle.read(MAX_RECEIPT_BYTES + 1)
-    except OSError as exc:
-        _fail(f'cannot read receipt: {exc}')
-    if len(raw) > MAX_RECEIPT_BYTES:
-        _fail('receipt exceeds size limit')
-    try:
-        text = raw.decode('utf-8')
-    except UnicodeDecodeError:
-        _fail('receipt is not UTF-8')
-    receipt = _loads(text)
+    receipt = _read_document(path, 'receipt')
     if not isinstance(receipt, dict) or set(receipt) != RECEIPT_KEYS:
         _fail('receipt has unexpected fields')
     if receipt['schema'] != RECEIPT_SCHEMA:
@@ -641,6 +694,113 @@ def verify_receipt(path: str, pin_key_id: str | None = None,
             'post_quantum': 'hybrid', 'warnings': warnings}
 
 
+def verify_consistency(path: str, pin_key_id: str | None = None,
+                       pin_anchors: Sequence[tuple[int, str]] = (),
+                       pin_pq_key_id: str | None = None) -> dict[str, Any]:
+    """Verify an rf.consistency.v1 append-only proof between two anchors offline.
+
+    Proves that the ledger of `second_anchor` is the ledger of `first_anchor` with
+    entries appended: every entry the first anchor covered is still there, unchanged
+    and in the same position. Both anchors must be hybrid-signed rf.anchor.v4 anchors
+    under the same keys, and the RFC 9162 consistency path must reproduce BOTH signed
+    Merkle roots. No ledger entry is needed or disclosed.
+
+    The proof is anchor_pinned only when a --pin-anchor names one of its two anchors
+    (normally the first, held since the last review); every pin naming either anchor
+    must match. The report's next_pin is the second anchor, to hold from now on.
+    """
+    proof = _read_document(path, 'consistency proof')
+    if not isinstance(proof, dict) or set(proof) != CONSISTENCY_KEYS:
+        _fail('consistency proof has unexpected fields')
+    if proof['schema'] != CONSISTENCY_SCHEMA:
+        _fail(f'unsupported consistency proof schema {proof["schema"]!r}')
+
+    public_key, key_id = _receipt_key(proof['signing_key_pem'], _load_public_key, 'Ed25519 key')
+    pq = _receipt_key(proof['pq_signing_key_pem'], _load_pq_public_key, 'ML-DSA-65 key')
+
+    first, second = proof['first_anchor'], proof['second_anchor']
+    for name, anchor in (('first', first), ('second', second)):
+        if not isinstance(anchor, dict):
+            _fail(f'consistency proof {name}_anchor is not an object')
+        if anchor.get('schema') != ANCHOR_SCHEMA_V4:
+            _fail(f'consistency proof {name}_anchor is not a hybrid Merkle anchor (rf.anchor.v4)')
+        seq = anchor.get('seq')
+        _check_anchor(anchor, seq if _is_int(seq) else 0, public_key, key_id, pq,
+                      where='consistency proof')
+
+    if first['seq'] >= second['seq']:
+        _fail('consistency proof second_anchor is not later than first_anchor')
+    first_size, second_size = first['ledger_count'], second['ledger_count']
+    if second_size < first_size:
+        _fail('ledger count regressed between the two anchors')
+    if second['created_at'] < first['created_at']:
+        _fail('anchor time regressed between the two anchors')
+    if second['seq'] == first['seq'] + 1 and \
+            not hmac.compare_digest(second['prev_anchor_hash'], first['anchor_hash']):
+        _fail('second_anchor does not chain to first_anchor')
+
+    path_items = proof['consistency_path']
+    if not isinstance(path_items, list):
+        _fail('consistency_path is not a list')
+    first_root, second_root = first['merkle_root'], second['merkle_root']
+    if first_size == 0:
+        # The empty ledger is a prefix of every ledger; nothing to prove beyond its form.
+        if path_items:
+            _fail('consistency path must be empty when the first anchor covers no entries')
+        if first_root != EMPTY_MERKLE_ROOT or first['ledger_head'] != ZERO_HASH:
+            _fail('first_anchor covers no entries but does not sign the empty ledger')
+    elif first_size == second_size:
+        if path_items:
+            _fail('consistency path must be empty when both anchors cover the same entries')
+        if not hmac.compare_digest(first_root, second_root) or \
+                not hmac.compare_digest(first['ledger_head'], second['ledger_head']):
+            _fail('anchors cover the same number of entries but sign different ledgers')
+    else:
+        computed_first, computed_second = _roots_from_consistency_path(
+            first_size, second_size, path_items, first_root)
+        if not hmac.compare_digest(computed_first, first_root):
+            _fail('consistency proof does not reach the merkle_root signed by first_anchor')
+        if not hmac.compare_digest(computed_second, second_root):
+            _fail('consistency proof does not reach the merkle_root signed by second_anchor')
+
+    trust = 'internal_only'
+    if pin_key_id is not None:
+        if pin_key_id != key_id:
+            _fail(f'consistency proof key {key_id} does not match pinned key {pin_key_id}')
+        trust = 'key_pinned'
+    if pin_pq_key_id is not None and pin_pq_key_id != pq[1]:
+        _fail(f'consistency proof post-quantum key {pq[1]} does not match pinned key '
+              f'{pin_pq_key_id}')
+    warnings: list[str] = []
+    pinned: list[int] = []
+    if pin_anchors:
+        for anchor in (first, second):
+            matching = [digest for pin_seq, digest in pin_anchors if pin_seq == anchor['seq']]
+            if any(digest != anchor['anchor_hash'] for digest in matching):
+                _fail(f'pinned anchor {anchor["seq"]} hash mismatch')
+            if matching:
+                pinned.append(anchor['seq'])
+        if not pinned:
+            _fail(f'no --pin-anchor for anchor {first["seq"]} or {second["seq"]}; export the '
+                  'proof from an anchor you hold a pin for (--from-seq)')
+        trust = 'anchor_pinned'
+        ignored = sorted({pin_seq for pin_seq, _ in pin_anchors
+                          if pin_seq not in (first['seq'], second['seq'])})
+        if ignored:
+            warnings.append(f'pins for anchors {ignored} do not apply to this proof and were not checked.')
+    else:
+        warnings.append('No externally held anchor pin supplied: anyone holding the operator keys '
+                        'can produce two consistent anchors. Pin the first anchor hash.')
+    return {'status': 'VERIFIED', 'type': CONSISTENCY_SCHEMA, 'trust_level': trust,
+            'first_anchor_seq': first['seq'], 'first_anchor_hash': first['anchor_hash'],
+            'first_tree_size': first_size, 'first_merkle_root': first_root,
+            'second_anchor_seq': second['seq'], 'second_anchor_hash': second['anchor_hash'],
+            'second_tree_size': second_size, 'second_merkle_root': second_root,
+            'appended_entries': second_size - first_size, 'pinned_anchors': pinned,
+            'next_pin': f'{second["seq"]}:{second["anchor_hash"]}',
+            'key_id': key_id, 'pq_key_id': pq[1], 'post_quantum': 'hybrid', 'warnings': warnings}
+
+
 def _parse_pin(text: str) -> tuple[int, str]:
     seq_text, _, digest = text.partition(':')
     if not seq_text.isdigit() or not _HEX64.match(digest):
@@ -651,10 +811,14 @@ def _parse_pin(text: str) -> tuple[int, str]:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description='Verify a RightsFrames evidence bundle, or with --receipt a single-entry '
-                    'inclusion receipt, offline.')
-    parser.add_argument('bundle', help='evidence bundle (.zip), or receipt (.json) with --receipt')
+                    'inclusion receipt, or with --consistency an append-only proof between '
+                    'two anchors, offline.')
+    parser.add_argument('bundle', help='evidence bundle (.zip), receipt (.json) with --receipt, '
+                                       'or consistency proof (.json) with --consistency')
     parser.add_argument('--receipt', action='store_true',
                         help='verify an rf.receipt.v1 single-entry inclusion receipt')
+    parser.add_argument('--consistency', action='store_true',
+                        help='verify an rf.consistency.v1 append-only proof between two anchors')
     parser.add_argument('--pin-key-id')
     parser.add_argument('--pin-anchor', action='append', default=[], type=_parse_pin,
                         metavar='SEQ:HASH')
@@ -668,9 +832,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument('--json', action='store_true')
     args = parser.parse_args(argv)
     try:
-        if args.receipt:
-            if args.min_anchors or args.require_full_pin:
-                raise VerificationError('--min-anchors and --require-full-pin apply to bundles only')
+        if args.receipt and args.consistency:
+            raise VerificationError('--receipt and --consistency cannot be combined')
+        if (args.receipt or args.consistency) and (args.min_anchors or args.require_full_pin):
+            raise VerificationError('--min-anchors and --require-full-pin apply to bundles only')
+        if args.consistency:
+            # Both anchors are always hybrid, so --require-pq holds by construction.
+            report = verify_consistency(args.bundle, args.pin_key_id, args.pin_anchor,
+                                        pin_pq_key_id=args.pin_pq_key_id)
+        elif args.receipt:
             # A receipt is always hybrid, so --require-pq holds by construction.
             report = verify_receipt(args.bundle, args.pin_key_id, args.pin_anchor,
                                     pin_pq_key_id=args.pin_pq_key_id)

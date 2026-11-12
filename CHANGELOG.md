@@ -26,6 +26,16 @@ every release is an annotated tag built, reproduced and attested by
   anchors and pins valid. Opened keys are cached per process, so `/health` cannot be
   used to force repeated memory-hard key derivations.
 - Demo: four receipt checks (14 expectations with ML-DSA-65).
+- Append-only consistency proofs (`rf.consistency.v1`): prove that the ledger signed by a
+  later `rf.anchor.v4` anchor is the ledger signed by an earlier one with entries
+  appended, using an RFC 9162 consistency path between the two signed Merkle roots and
+  disclosing no entry. A holder of a pin for the earlier anchor can check everything
+  written since and move the pin forward (`next_pin`). New `core/rf_consistency.py`,
+  `tools/rf_export_consistency.py`, `rf_verify.py --consistency`, and
+  `GET /v1/anchors/{seq}/consistency`. `core/rf_merkle.py` gains `consistency_path`,
+  `roots_from_consistency_path` and `verify_consistency`; the verifier carries its own
+  implementation. The exporter refuses to emit a proof whose roots, path or key
+  identities do not match the anchors. Anchor signing and verification are unchanged.
 
 - `tools/rf_repair_anchor_log.py` / `rf_core.repair_anchor_log()`: recover from an
   interrupted anchor append. The trailing fragment is kept as `anchors.torn.<UTC>.bin`
