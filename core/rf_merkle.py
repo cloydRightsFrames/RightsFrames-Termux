@@ -23,7 +23,7 @@ import hashlib
 import re
 from typing import Iterable, Sequence
 
-_HEX64 = re.compile(r'^[0-9a-f]{64}$')
+_HEX64 = re.compile(r'^[0-9a-f]{64}\Z')
 EMPTY_ROOT = hashlib.sha256(b'').hexdigest()
 MAX_PATH_LENGTH = 64
 

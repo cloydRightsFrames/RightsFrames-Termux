@@ -676,6 +676,46 @@ def _select_pq_signer(anchors: list[dict[str, Any]]) -> tuple[Any, str] | None:
         raise ValueError(f'post-quantum anchor signing unavailable: {exc}') from exc
 
 
+def _check_extends_newest_anchor(rows: list[tuple[Any, ...]], anchors: list[dict[str, Any]],
+                                 created_at: str) -> None:
+    """Refuse to anchor state that contradicts what the newest anchor already signed.
+
+    The newest anchor commits to the entry hash at its ledger_count and, through the
+    hash chain, to every entry before it. A ledger that is shorter than that, or holds
+    another hash at that position, was truncated or rewritten after it was signed (or
+    restored from an older copy). A new anchor over it would put a valid signature on
+    the divergent history, and no verifier accepts such an anchor after its
+    predecessor, so the anchor log could never verify again. The same is true of an
+    anchor dated before its predecessor, which the independent verifier rejects.
+
+    `rows` must already have passed _check_chain_rows (ids 1..n, hashes chained). This
+    is a consistency guard for the signer, not a defence against an attacker who can
+    rewrite the data directory, anchor log included: only anchor pins held elsewhere
+    detect that.
+    """
+    if not anchors:
+        return
+    seq = len(anchors)
+    newest = anchors[-1]
+    count = newest.get('ledger_count')
+    head = newest.get('ledger_head')
+    previous_created = newest.get('created_at')
+    if (not isinstance(count, int) or isinstance(count, bool) or count < 0
+            or not isinstance(head, str) or not isinstance(previous_created, str)
+            or not isinstance(newest.get('anchor_hash'), str)):
+        raise ValueError(f'anchor {seq} is malformed; refusing to anchor after it')
+    if count > len(rows):
+        raise ValueError(f'ledger has {len(rows)} entries but anchor {seq} signed {count}; '
+                         'refusing to anchor a truncated ledger')
+    stored = str(rows[count - 1][5]) if count else '0' * 64
+    if stored != head:
+        raise ValueError(f'ledger entry {count} differs from the head signed by anchor {seq}; '
+                         'refusing to anchor rewritten history')
+    if created_at < previous_created:
+        raise ValueError(f'system clock ({created_at}) is behind anchor {seq} '
+                         f'({previous_created}); correct the clock before anchoring')
+
+
 def create_anchor() -> dict[str, Any]:
     private, public, key_id = load_or_create_keypair()
     init_db()
@@ -690,6 +730,8 @@ def create_anchor() -> dict[str, Any]:
         row = (rows[-1][0], rows[-1][5]) if rows else None
 
         anchors = _read_anchors()
+        created_at = _utc_now()
+        _check_extends_newest_anchor(rows, anchors, created_at)
         pq_signer = _select_pq_signer(anchors)
         previous_anchor_hash = (
             anchors[-1]['anchor_hash'] if anchors else '0' * 64
@@ -703,7 +745,7 @@ def create_anchor() -> dict[str, Any]:
         core = {
             'schema': ANCHOR_SCHEMA_V2,
             'seq': sequence,
-            'created_at': _utc_now(),
+            'created_at': created_at,
             'ledger_count': last_id,
             'ledger_head': head_hash,
             'prev_anchor_hash': previous_anchor_hash,
@@ -746,6 +788,7 @@ def verify_anchors() -> tuple[bool, str]:
 
     previous_anchor_hash = '0' * 64
     previous_ledger_count = 0
+    previous_created = ''
     seen_pq = False
     seen_merkle = False
     pq_public: tuple[Any, str] | None = None
@@ -776,6 +819,14 @@ def verify_anchors() -> tuple[bool, str]:
 
         if ledger_count < previous_ledger_count:
             return False, f'ledger count regressed at anchor {index}'
+
+        # Same rule and same wording as the independent verifier, so a ledger the
+        # verifier would reject is not reported healthy here.
+        created = anchor.get('created_at')
+        if not isinstance(created, str):
+            return False, f'anchor {index} malformed'
+        if created < previous_created:
+            return False, f'anchor time regressed at {index}'
 
         legacy = 'key_id' not in anchor
         schema = anchor.get('schema')
@@ -841,6 +892,7 @@ def verify_anchors() -> tuple[bool, str]:
 
         previous_anchor_hash = anchor_hash
         previous_ledger_count = ledger_count
+        previous_created = created
 
     conn = _connect()
     try:

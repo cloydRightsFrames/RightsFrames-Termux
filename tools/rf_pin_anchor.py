@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-_HEX64 = re.compile(r'^[0-9a-f]{64}$')
+_HEX64 = re.compile(r'^[0-9a-f]{64}\Z')
 
 
 class PinError(Exception):

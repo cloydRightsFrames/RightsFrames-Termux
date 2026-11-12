@@ -57,8 +57,8 @@ MAX_LINE_BYTES = 2 * 1024 * 1024
 MAX_PAYLOAD_BYTES = 262144
 MAX_ENTRY_TYPE = 128
 ZERO_HASH = '0' * 64
-_HEX64 = re.compile(r'^[0-9a-f]{64}$')
-_TS = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$')
+_HEX64 = re.compile(r'^[0-9a-f]{64}\Z')
+_TS = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z\Z')
 LEDGER_KEYS = frozenset({'id', 'ts', 'entry_type', 'payload', 'prev_hash', 'entry_hash'})
 ANCHOR_CORE_V2 = ('schema', 'seq', 'created_at', 'ledger_count', 'ledger_head',
                   'prev_anchor_hash', 'key_id')

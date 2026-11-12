@@ -26,6 +26,11 @@ Members:
   - Legacy anchors (no `key_id`) hash `json.dumps(core, sort_keys=True)` and may not claim `rf.anchor.v3`.
   - Each anchor must satisfy `ledger_head == entry_hash of entry[ledger_count]` and chain to its
     predecessor through `prev_anchor_hash`.
+  - `ledger_count` and `created_at` never decrease from one anchor to the next. The signer refuses to
+    create an anchor that would break either rule, or whose ledger does not contain the entry hash its
+    newest anchor signed at that anchor's `ledger_count`.
+  - Formats are exact: every hash is 64 lowercase hex characters and every `ts` and `created_at` is
+    `YYYY-MM-DDTHH:MM:SS.ffffffZ`, with nothing before or after (no whitespace, no trailing newline).
   - No downgrade: once a v3 or v4 anchor appears, every later anchor must be v3 or v4; once a v4 anchor
     appears, every later anchor must be v4.
 - `signing_key.pub.pem`: Ed25519 SPKI PEM. `key_id = "ed25519:" + SHA-256(raw 32-byte public key)`.
