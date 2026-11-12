@@ -47,9 +47,12 @@ def test_chain_detects_tampering(isolated):
     with isolated.DB_PATH.open('rb') as handle:
         original = handle.read()
 
+    import contextlib
     import sqlite3
 
-    with sqlite3.connect(isolated.DB_PATH) as conn:
+    # sqlite3's own context manager only ends the transaction; closing() also
+    # releases the connection.
+    with contextlib.closing(sqlite3.connect(isolated.DB_PATH)) as conn:
         conn.execute(
             'UPDATE ledger_entries SET payload=? WHERE id=1',
             (json.dumps({'n': 999}),),
@@ -117,9 +120,10 @@ def test_legacy_anchor_remains_verifiable(isolated):
         'prev_anchor_hash': '0' * 64,
     }
 
+    import contextlib
     import sqlite3
 
-    with sqlite3.connect(isolated.DB_PATH) as conn:
+    with contextlib.closing(sqlite3.connect(isolated.DB_PATH)) as conn:
         row = conn.execute(
             'SELECT entry_hash FROM ledger_entries ORDER BY id DESC LIMIT 1'
         ).fetchone()
