@@ -10,8 +10,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
 
 concurrency:
   group: rightsframes-provenance-${{ github.ref }}
@@ -384,6 +382,10 @@ jobs:
       bundle_name: rightsframes-slsa3-${{ github.sha }}
 
   provenance:
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     name: External SLSA provenance
     needs:
       - source-integrity

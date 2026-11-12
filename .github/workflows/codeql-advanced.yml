@@ -12,10 +12,12 @@ concurrency:
   cancel-in-progress: false
 permissions:
   contents: read
-  security-events: write
-  actions: read
 jobs:
   analyze:
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
     name: "CodeQL Analysis - ${{ matrix.language }}"
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
