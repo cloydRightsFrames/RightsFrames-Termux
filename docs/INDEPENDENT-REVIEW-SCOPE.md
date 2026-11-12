@@ -66,7 +66,12 @@ Each claim is falsifiable. A finding is any input that violates one.
    the verifier report a higher trust level than its pins justify, or crash in a way
    that is reported as success.
 9. **Snapshot consistency.** `create_anchor` signs only ledger state it has verified,
-   from one database snapshot, under concurrent appends.
+   from one database snapshot, under concurrent appends. It never appends an anchor
+   that the verifier would reject after its predecessor: not over a ledger that is
+   shorter than, or differs at, the position its newest anchor signed, and not with
+   a `created_at` earlier than that anchor's. (This guards the signer against
+   corruption, restores and clock steps; it is not a defence against an attacker who
+   can rewrite the anchor log, which only pins detect.)
 10. **Crash consistency.** An interrupted anchor append is detected, never silently
     extended, and recoverable with `tools/rf_repair_anchor_log.py` without losing a
     signed anchor or evidence of the fragment.

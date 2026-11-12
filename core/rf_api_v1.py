@@ -31,7 +31,7 @@ FAIL_LIMIT = 10
 FAIL_WINDOW = 60.0
 _FAILURES: dict[str, list[float]] = {}
 _FAIL_LOCK = threading.Lock()
-_KEY = re.compile(r'^[A-Za-z0-9._-]{8,128}$')
+_KEY = re.compile(r'^[A-Za-z0-9._-]{8,128}\Z')
 _exporter_module: Any = None
 
 

@@ -28,7 +28,7 @@ SCOPES = frozenset({
     'entries:write', 'ledger:read', 'anchor:create', 'evidence:export', 'admin:principals',
 })
 TOKEN_PREFIX = 'rfp1'
-_ID = re.compile(r'^[a-z0-9][a-z0-9-]{2,39}$')
+_ID = re.compile(r'^[a-z0-9][a-z0-9-]{2,39}\Z')
 _PBKDF2_NAME = 'sha256'
 _PBKDF2_ITERATIONS = 310_000
 _DUMMY_SALT_HEX = secrets.token_hex(16)

@@ -84,6 +84,22 @@ every release is an annotated tag built, reproduced and attested by
   of itself, so `[a, b, c]` and `[a, b, c, c]` had the same root (CVE-2012-2459 class).
   Odd nodes are now carried up unchanged (the RFC 9162 tree shape) and proofs check
   their exact length.
+- `create_anchor` signed whatever passed the hash-chain check, even when it contradicted
+  its own newest anchor. Three cases, each of which left an anchor log that could never
+  verify again: a ledger truncated below that anchor (it appended an anchor with a lower
+  `ledger_count`), a ledger rewritten with a recomputed hash chain (it put a valid
+  signature on the rewritten history), and a system clock behind that anchor (it appended
+  an anchor the independent verifier rejects as `anchor time regressed`, while the core
+  reported the ledger healthy). It now refuses all three and appends nothing; anchoring
+  resumes once the ledger or the clock is put right.
+- The core's `verify_anchors` did not check that `created_at` never decreases, so a
+  ledger the independent verifier rejects was reported `ok` by `/health`. It now applies
+  the same rule with the same message.
+- Format patterns ended in `$`, which also matches before a trailing newline. A receipt
+  whose inclusion-path elements each had a newline appended still verified as
+  `anchor_pinned`, and `ts`, `created_at`, anchor pins, principal ids and idempotency
+  keys were accepted with one. The verifier, `core/rf_merkle.py`, `core/rf_auth.py`,
+  `core/rf_api_v1.py` and `tools/rf_pin_anchor.py` now require an exact match.
 - Code scanning (CodeQL security-and-quality + security-extended) reports no results on
   `main`; it previously reported 12:
   - `py/clear-text-logging-sensitive-data` (high) in `tools/rf_apex_enterprise_suite.py`:
