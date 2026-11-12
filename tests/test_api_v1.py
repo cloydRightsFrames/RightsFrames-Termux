@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-pytest.importorskip('httpx')
+pytest.importorskip('httpx2')
 from fastapi.testclient import TestClient  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]

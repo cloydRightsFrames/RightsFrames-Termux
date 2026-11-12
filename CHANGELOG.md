@@ -41,7 +41,32 @@ every release is an annotated tag built, reproduced and attested by
   log and verifies the ledger, and restarts named runit services. Covered by
   `tests/test_rf_sync.py` against real git repositories.
 
+### Security
+- A request sent with chunked transfer encoding carries no `Content-Length`, so it
+  passed the request-size check and its whole body was buffered and parsed before any
+  size or authentication check ran: one unauthenticated 200 MiB request raised the
+  server's memory from 67 MiB to 864 MiB. The body is now counted as it arrives
+  (`BodyLimitMiddleware` in `core/app.py`) and refused with 413 as soon as it passes
+  `MAX_REQUEST_BYTES`, on every route, before authentication; the same request now
+  peaks at 61 MiB.
+- `/health` is unauthenticated and verifies the whole ledger and every anchor signature
+  on each call, so its cost grew with the ledger and any client could repeat it. One
+  verification is now shared by all callers for `RF_HEALTH_CACHE_SECONDS` (default 5,
+  0 to 300, 0 disables sharing) and concurrent callers wait for the one in flight. A
+  tampered ledger is reported as degraded at the next verification.
+
+### Changed
+- Every ledger connection now sets `PRAGMA synchronous=FULL` itself. The setting is
+  per connection, so the value `init_db()` set on its own connection never applied to
+  the connections that write; durability depended on the SQLite build's default.
+- Tests use `httpx2` (the client `starlette.testclient` now expects) instead of the
+  deprecated `httpx`; `core/requirements-test.txt` is regenerated. Runtime dependencies
+  are unchanged.
+
 ### Fixed
+- `POST /anchor` answered a refused anchor with the detail `bad entry`; it now says
+  `anchor not created`.
+- Three tests left SQLite connections open (`ResourceWarning: unclosed database`).
 - `create_anchor` verified the chain and then read the ledger head in a separate read,
   so an entry inserted in between could be signed into an anchor without having been
   verified. Verification, head and Merkle leaves now come from one snapshot.

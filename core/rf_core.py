@@ -367,6 +367,11 @@ def _connect() -> sqlite3.Connection:
     try:
         conn.execute('PRAGMA foreign_keys=ON')
         conn.execute('PRAGMA busy_timeout=5000')
+        # synchronous is a per-connection setting: the value init_db() sets on
+        # its own connection does not carry over, and some SQLite builds
+        # default WAL databases to NORMAL, where a power loss can drop the
+        # most recent commits. Every connection that can write asks for FULL.
+        conn.execute('PRAGMA synchronous=FULL')
     except Exception:
         conn.close()
         raise
