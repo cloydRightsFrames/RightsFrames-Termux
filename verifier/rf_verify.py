@@ -38,10 +38,10 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import re
 import sys
 import zipfile
-import zlib
 from typing import Any, Sequence
 
 from cryptography.exceptions import InvalidSignature
@@ -121,10 +121,18 @@ def _reject_constant(name: str) -> Any:
     _fail(f'non-finite JSON constant {name}')
 
 
+def _finite_float(text: str) -> float:
+    """A JSON number such as 1e999 overflows to infinity, which has no canonical encoding."""
+    value = float(text)
+    if not math.isfinite(value):
+        _fail(f'non-finite JSON number {text[:32]}')
+    return value
+
+
 def _loads(text: str) -> Any:
     try:
         return json.loads(text, object_pairs_hook=_no_duplicates,
-                          parse_constant=_reject_constant)
+                          parse_constant=_reject_constant, parse_float=_finite_float)
     except (ValueError, RecursionError) as exc:
         _fail(f'invalid JSON: {exc}')
         raise  # unreachable; keeps control flow explicit for static analysis
@@ -148,9 +156,14 @@ def _read_members(path: str) -> dict[str, bytes]:
                     _fail(f'member {info.filename} exceeds size limit')
                 members[info.filename] = data
             return members
-    except (zipfile.BadZipFile, OSError, NotImplementedError, RuntimeError,
-            EOFError, zlib.error) as exc:
-        _fail(f'cannot read bundle: {exc}')
+    except VerificationError:
+        raise
+    except Exception as exc:
+        # zipfile and the decompressors behind it report a malformed archive with many
+        # exception types (BadZipFile, OSError, EOFError, NotImplementedError, RuntimeError,
+        # zlib.error, lzma.LZMAError, UnicodeDecodeError, struct.error, ...). Each of them
+        # means the same thing here: this is not a readable bundle.
+        _fail(f'cannot read bundle: {type(exc).__name__}: {exc}')
     return {}
 
 
@@ -309,7 +322,7 @@ def _verify_manifest(members: dict[str, bytes]) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         _fail('manifest is not an object')
     schema = manifest.get('schema')
-    if schema not in SCHEMA_MEMBERS:
+    if not isinstance(schema, str) or schema not in SCHEMA_MEMBERS:
         _fail(f'unsupported bundle schema {schema!r}')
     data_members = SCHEMA_MEMBERS[schema]
     if set(members) != {'manifest.json', *data_members}:
@@ -336,6 +349,10 @@ def _check_entry(entry: dict[str, Any], index: int) -> None:
         _fail(f'bad timestamp at {index}')
     if not isinstance(entry_type, str) or not entry_type or len(entry_type) > MAX_ENTRY_TYPE:
         _fail(f'bad entry_type at {index}')
+    try:
+        entry_type.encode('utf-8')
+    except UnicodeEncodeError:
+        _fail(f'bad entry_type at {index}')
     if not isinstance(payload, str):
         _fail(f'payload is not a string at {index}')
     try:
@@ -350,7 +367,11 @@ def _check_entry(entry: dict[str, Any], index: int) -> None:
     parsed = _loads(payload)
     if not isinstance(parsed, dict):
         _fail(f'payload is not an object at {index}')
-    if canonical_json(parsed) != payload:
+    try:
+        canonical = canonical_json(parsed)
+    except (ValueError, RecursionError):
+        canonical = None
+    if canonical != payload:
         _fail(f'payload not canonical at {index}')
     expected = sha256_hex(f'{index}|{prev_hash}|{ts}|{entry_type}|{payload}'.encode('utf-8'))
     if not hmac.compare_digest(expected, entry_hash):
@@ -425,7 +446,10 @@ def _check_anchor(anchor: dict[str, Any], index: int, public_key: Ed25519PublicK
         if created < previous_ts:
             _fail(f'anchor time regressed at {index}')
     core = {name: anchor[name] for name in core_keys}
-    material = (json.dumps(core, sort_keys=True) if legacy else canonical_json(core)).encode('utf-8')
+    try:
+        material = (json.dumps(core, sort_keys=True) if legacy else canonical_json(core)).encode('utf-8')
+    except (ValueError, RecursionError):  # UnicodeEncodeError is a ValueError
+        _fail(f'anchor {index} has a field with no canonical encoding')
     if not hmac.compare_digest(sha256_hex(material), anchor['anchor_hash']):
         _fail(f'anchor hash mismatch at {index}')
     try:

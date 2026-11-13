@@ -24,6 +24,24 @@ a workflow uses an action that is not pinned to a full commit SHA, runs
 `pull_request_target`, or drops one of the release controls (reproducible
 builds, SLSA provenance, release SBOM).
 
+## Fuzzing
+
+`fuzz/` holds four Atheris (libFuzzer) targets. Three feed mutated evidence bundles,
+receipts and consistency proofs to `verifier/rf_verify.py` and fail if it raises
+anything other than `VerificationError`, or accepts a document whose signed content
+differs from the genuine ledger the target builds (the fuzzer holds no signing key, so
+that would be a forgery). The fourth checks `core/rf_merkle.py` against the verifier's
+own Merkle code. CI runs each for two minutes on every change and fifteen each week
+(`fuzz.yml`, Python 3.12 on Linux).
+
+    python -m pip install --require-hashes -r core/requirements.txt -r .github/scripts/requirements-fuzz.txt
+    python fuzz/fuzz_receipt.py -max_total_time=300    # also fuzz_consistency, fuzz_bundle, fuzz_merkle
+    python fuzz/fuzz_receipt.py crash-<hash>           # replay a saved input
+
+The ledger a target builds is deterministic (fixed test keys and clock), so a saved
+input reproduces anywhere. When a target fails, fix the cause and add the input's
+essence as a case in `tests/test_verifier_hostile_input.py`.
+
 ## Dependencies
 
 Edit the `.in` file, then regenerate the lock with the exact command in the

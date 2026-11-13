@@ -26,6 +26,12 @@ every release is an annotated tag built, reproduced and attested by
   anchors and pins valid. Opened keys are cached per process, so `/health` cannot be
   used to force repeated memory-hard key derivations.
 - Demo: four receipt checks (14 expectations with ML-DSA-65).
+- Fuzzing: four Atheris (libFuzzer) targets in `fuzz/`, run by the new `fuzz.yml` for two
+  minutes each on every change and fifteen each week, with Atheris installed from a
+  hash-locked file. Three mutate genuine bundles, receipts and consistency proofs as
+  parsed JSON (and as raw bytes) and fail if the verifier raises anything but
+  `VerificationError` or accepts content that differs from the genuine ledger; the
+  fourth checks the core's and the verifier's RFC 9162 code against each other.
 - Append-only consistency proofs (`rf.consistency.v1`): prove that the ledger signed by a
   later `rf.anchor.v4` anchor is the ledger signed by an earlier one with entries
   appended, using an RFC 9162 consistency path between the two signed Merkle roots and
@@ -52,6 +58,17 @@ every release is an annotated tag built, reproduced and attested by
   `tests/test_rf_sync.py` against real git repositories.
 
 ### Security
+- The independent verifier raised exceptions other than `VerificationError` for five
+  kinds of malformed input: a number that overflows to infinity (`1e999`) in an entry
+  payload or an anchor; a lone surrogate (`"\ud800"`) in `entry_type` or in an anchor's
+  `pq_key_id`; a bundle manifest whose `schema` is a list or object; a corrupt
+  LZMA-compressed bundle member; and a ZIP member name flagged UTF-8 that is not. No
+  such input was accepted, and the command line already reported each as a failure
+  (exit 1, "internal verifier error"), but callers of `verify_bundle`, `verify_receipt`
+  and `verify_consistency` did not get the documented error. All are now rejected with
+  `VerificationError`: non-finite numbers at the JSON parser, the rest where they are
+  used, and any error from reading the archive as "cannot read bundle". Found by the
+  new fuzz targets; `tests/test_verifier_hostile_input.py` covers each.
 - A request sent with chunked transfer encoding carries no `Content-Length`, so it
   passed the request-size check and its whole body was buffered and parsed before any
   size or authentication check ran: one unauthenticated 200 MiB request raised the
@@ -66,6 +83,9 @@ every release is an annotated tag built, reproduced and attested by
   tampered ledger is reported as degraded at the next verification.
 
 ### Changed
+- `.github/CODEOWNERS`: every path now lists all three owners, so that "Require review
+  from Code Owners" can be enabled in the `main` ruleset without leaving paths that
+  their only owner could never get approved.
 - Every ledger connection now sets `PRAGMA synchronous=FULL` itself. The setting is
   per connection, so the value `init_db()` set on its own connection never applied to
   the connections that write; durability depended on the SQLite build's default.
