@@ -1,0 +1,59 @@
+name: Fuzz
+
+# Coverage-guided fuzzing (Atheris / libFuzzer) of the independent verifier's three
+# document parsers and of the two RFC 9162 Merkle implementations against each other.
+# A short run on every change, a longer one each week. See fuzz/_harness.py.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * 3'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rightsframes-fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [receipt, consistency, bundle, merkle]
+    env:
+      TARGET: ${{ matrix.target }}
+      # Seconds of fuzzing per target: short on a change, longer on the weekly run.
+      FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '900' || '120' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: '3.12'
+      - name: Install hash-locked runtime dependencies and Atheris
+        run: python -m pip install --disable-pip-version-check --require-hashes -r core/requirements.txt -r .github/scripts/requirements-fuzz.txt
+      - name: Fuzz
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fuzz-artifacts
+          python "fuzz/fuzz_${TARGET}.py" \
+            -max_total_time="${FUZZ_SECONDS}" -timeout=25 -rss_limit_mb=3072 \
+            -print_final_stats=1 -artifact_prefix="fuzz-artifacts/${TARGET}-"
+      - name: Keep the failing input
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: fuzz-artifacts/
+          retention-days: 30
+          if-no-files-found: ignore

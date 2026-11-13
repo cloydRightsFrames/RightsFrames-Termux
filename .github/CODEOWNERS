@@ -2,7 +2,11 @@
 # the "RightsFrames Source L4 Two-Party Review" ruleset: two approvals, the
 # last push approved by someone other than its author, every required check
 # green and up to date with main.
-*                       @cloydRightsFrames
+#
+# Every path has all three owners. With "Require review from Code Owners" enabled
+# in that ruleset, a pull request can only be approved by a code owner who is not
+# its author, so a path owned by one account alone could never be merged by it.
+*                       @cloydRightsFrames @charlieloydrightsframes2027 @JessicaGypsy
 
 # Security-critical paths: ledger, signatures, anchors, verifiers, release
 # and supply-chain controls. Both reviewers are requested on every change.

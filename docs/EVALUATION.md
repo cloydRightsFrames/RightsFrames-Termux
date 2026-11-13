@@ -21,6 +21,7 @@ third party can verify offline, without trusting the operator.
 | Inclusion receipts | `core/rf_receipt.py`, `tools/rf_export_receipt.py` | `rf.receipt.v1`: proves one entry without the rest |
 | Consistency proofs | `core/rf_consistency.py`, `tools/rf_export_consistency.py` | `rf.consistency.v1`: proves a later anchor only appended to an earlier one, with no entries |
 | Key sealing | `core/rf_keyseal.py`, `tools/rf_seal_keys.py` | `rf.sealed-key.v1`: private keys encrypted at rest |
+| Fuzz targets | `fuzz/`, `.github/workflows/fuzz.yml` | Atheris / libFuzzer runs of the verifier's parsers and of both Merkle implementations |
 | Release provenance | `.github/workflows/slsa-build-l3.yml`, `tools/verify_release_external.sh` | Reproducible release tarball with SLSA provenance |
 
 ## Security model

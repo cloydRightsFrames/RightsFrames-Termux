@@ -5,3 +5,9 @@ __pycache__/
 .pytest_cache/
 .rightsframes/
 *.backup-*
+# Inputs saved by the fuzz targets (fuzz/)
+fuzz-artifacts/
+/crash-*
+/oom-*
+/timeout-*
+/slow-unit-*
