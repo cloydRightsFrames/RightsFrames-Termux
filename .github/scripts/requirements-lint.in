@@ -3,4 +3,4 @@
 #
 #   uv pip compile .github/scripts/requirements-lint.in --universal --generate-hashes \
 #     --python-version 3.12 -o .github/scripts/requirements-lint.txt
-ruff==0.17.3
+ruff==0.17.4
