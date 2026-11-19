@@ -2,10 +2,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from core.rf_filelock import exclusive_file_lock
 
 SCHEMA = "rf.audit.v1"
 ZERO = "0" * 64
@@ -19,6 +21,11 @@ def _hash(value: bytes) -> str:
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
+
+class _BrokenChain(ValueError):
+    pass
+
+
 class AuditLog:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -28,16 +35,36 @@ class AuditLog:
         if not self.path.exists():
             return None
         last = None
+        previous = ZERO
+        seq = 1
         with self.path.open("rb") as fh:
             for raw in fh:
-                if raw.strip():
-                    last = json.loads(raw)
+                if not raw.strip():
+                    continue
+                event = json.loads(raw)
+                if not isinstance(event, dict) or not isinstance(event.get("hash"), str):
+                    raise _BrokenChain(f"invalid audit event at {seq}")
+                supplied = event.pop("hash")
+                if type(event.get("seq")) is not int or event["seq"] != seq:
+                    raise _BrokenChain(f"sequence mismatch at {seq}")
+                if event.get("prev_hash") != previous:
+                    raise _BrokenChain(f"previous hash mismatch at {seq}")
+                if _hash(_canonical(event)) != supplied:
+                    raise _BrokenChain(f"hash mismatch at {seq}")
+                event["hash"] = previous = supplied
+                last = event
+                seq += 1
         return last
 
     def append(self, action: str, actor: str, outcome: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
         if not action or not actor or outcome not in {"allow", "deny", "observe"}:
             raise ValueError("invalid audit event")
 
+        with exclusive_file_lock(self.path.with_name(self.path.name + ".lock")):
+            return self._append_locked(action, actor, outcome, details)
+
+    def _append_locked(self, action: str, actor: str, outcome: str,
+                       details: dict[str, Any] | None) -> dict[str, Any]:
         previous = self._last()
 
         event = {
@@ -58,11 +85,22 @@ class AuditLog:
         try:
             with os.fdopen(fd, "wb") as fh:
                 if self.path.exists():
-                    fh.write(self.path.read_bytes())
+                    with self.path.open("rb") as source:
+                        shutil.copyfileobj(source, fh)
+                        if source.tell():
+                            source.seek(-1, os.SEEK_END)
+                            if source.read(1) != b"\n":
+                                fh.write(b"\n")
                 fh.write(encoded)
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, self.path)
+            if os.name == "posix":
+                directory = os.open(self.path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
@@ -73,31 +111,12 @@ class AuditLog:
         if not self.path.exists():
             return True, "empty"
 
-        expected_seq = 1
-        previous = ZERO
-
         try:
-            with self.path.open("rb") as fh:
-                for raw in fh:
-                    if not raw.strip():
-                        continue
-
-                    event = json.loads(raw)
-                    supplied = event.pop("hash")
-
-                    if event.get("seq") != expected_seq:
-                        return False, f"sequence mismatch at {expected_seq}"
-
-                    if event.get("prev_hash") != previous:
-                        return False, f"previous hash mismatch at {expected_seq}"
-
-                    if _hash(_canonical(event)) != supplied:
-                        return False, f"hash mismatch at {expected_seq}"
-
-                    previous = supplied
-                    expected_seq += 1
-
-        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            last = self._last()
+        except _BrokenChain as exc:
+            return False, str(exc)
+        except (OSError, ValueError, TypeError, RecursionError) as exc:
             return False, f"invalid audit log: {exc}"
 
-        return True, f"verified {expected_seq - 1} events"
+        count = last["seq"] if last else 0
+        return True, f"verified {count} events"

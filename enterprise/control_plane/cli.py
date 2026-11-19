@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
+import unittest
 from pathlib import Path
 
 from .audit import AuditLog
-from .health import readiness
+from .health import check, readiness
 from .policy import evaluate, load_policy
+from .provenance import git_identity
+from tools.rf_release_sbom import parse_lock
 
 _DEFAULT_POLICY = Path("enterprise/policy.json")
 _DEFAULT_AUDIT = Path(".rightsframes-enterprise/audit.jsonl")
@@ -41,12 +45,9 @@ def main() -> int:
 
 
 def _git_clean() -> bool:
-    try:
-        import subprocess
-        res = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
-        return len(res.stdout.strip()) == 0
-    except Exception:
-        raise OSError("git unavailable")
+    res = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"],
+                         capture_output=True, text=True, check=True)
+    return not res.stdout.strip()
 
 
 def _immutable_reference(value: str) -> bool:
@@ -81,6 +82,8 @@ def _workflow_actions_immutable() -> bool:
         return False
     try:
         files = sorted(list(workflow_dir.glob("*.yml")) + list(workflow_dir.glob("*.yaml")))
+        if not files:
+            return False
         for wf in files:
             for line in wf.read_text(encoding="utf-8").splitlines():
                 stripped = line.strip()
@@ -95,29 +98,55 @@ def _workflow_actions_immutable() -> bool:
         return False
 
 
-def _evaluate_facts() -> dict:
-    """Collect policy facts; any inspection failure is recorded as False (fail closed)."""
-    try:
-        clean = bool(_git_clean())
-    except Exception:
-        clean = False
-    try:
-        immutable = bool(_workflow_actions_immutable())
-    except Exception:
-        immutable = False
+def _check_locks() -> dict:
+    locks = {}
+    for name in ("core/requirements.txt", "core/requirements-test.txt"):
+        data = Path(name).read_bytes()
+        packages = parse_lock(data.decode("utf-8"))
+        locks[name] = {"packages": len(packages), "sha256": hashlib.sha256(data).hexdigest()}
+    return locks
+
+
+def _run_control_plane_tests() -> dict:
+    root = Path(__file__).resolve().parents[2]
+    if Path.cwd().resolve() != root:
+        raise ValueError("run the enterprise gate from the RightsFrames checkout")
+    name = "test_enterprise_control_plane.py"
+    suite = unittest.TestLoader().discover(str(root / "tests"), pattern=name)
+    result = unittest.TextTestRunner(stream=sys.stderr).run(suite)
+    if (not result.testsRun or not result.wasSuccessful() or result.skipped
+            or result.expectedFailures):
+        raise ValueError(f"{name} did not complete with every test passing (ran {result.testsRun})")
+    return {"suite": "tests/" + name, "passed": result.testsRun}
+
+
+def _evaluate_facts(evidence: dict | None = None) -> dict:
+    """Measure the checkout and attach local evidence for each policy fact."""
+    if evidence is None:
+        evidence = {}
+    source = check("source_revision", git_identity)
+    clean_before = check("clean_worktree", _git_clean)
+    evidence["pinned_dependencies"] = check("pinned_dependencies", _check_locks)
+    evidence["immutable_actions"] = check("immutable_actions", _workflow_actions_immutable)
+    evidence["tests_pass"] = check("tests_pass", _run_control_plane_tests)
+    end_source = check("source_revision", git_identity)
+    if source != end_source:
+        source = {"name": "source_revision", "status": "fail", "detail": "HEAD changed during the gate"}
+    evidence["provenance_record"] = source
+    evidence["clean_worktree"] = (check("clean_worktree", _git_clean)
+                                 if clean_before["status"] == "pass" else clean_before)
     return {
-        "clean_worktree": clean,
-        "immutable_actions": immutable,
-        "pinned_dependencies": Path("core/requirements.txt").is_file(),
-        "tests_pass": Path("tests/test_enterprise_control_plane.py").is_file(),
-        "provenance_record": Path("enterprise/policy.json").is_file(),
+        name: observation["status"] == "pass" for name, observation in evidence.items()
     }
 
 
 def _evaluate(policy_path) -> int:
     try:
-        result = evaluate(load_policy(policy_path), _evaluate_facts())
-        print(json.dumps(dict(result) if isinstance(result, dict) else {"allowed": result["allowed"]}, sort_keys=True, indent=2, default=str))
+        evidence: dict = {}
+        result = evaluate(load_policy(policy_path), _evaluate_facts(evidence))
+        report = dict(result) if isinstance(result, dict) else {"allowed": result["allowed"]}
+        report["evidence"] = evidence
+        print(json.dumps(report, sort_keys=True, indent=2))
         return 0 if result["allowed"] else 1
     except Exception as exc:
         print(json.dumps({"allowed": False, "evaluation_error": str(exc)}, sort_keys=True), file=sys.stdout)
@@ -129,7 +158,7 @@ def _readiness(policy_path) -> int:
         result = readiness(
             {
                 "git": lambda: subprocess.check_output(["git", "--version"], text=True).strip(),
-                "python": lambda: subprocess.check_output(["python", "--version"], text=True).strip(),
+                "python": lambda: sys.version.split()[0],
                 "policy": lambda: load_policy(policy_path)["mode"],
             }
         )

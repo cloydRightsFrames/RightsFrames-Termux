@@ -20,10 +20,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from fastapi import Path as PathParam
 from pydantic import BaseModel, ConfigDict, Field
 
-import rf_auth
-import rf_consistency
-import rf_core
-import rf_receipt
+if __package__:
+    from . import rf_auth, rf_consistency, rf_core, rf_receipt
+else:
+    import rf_auth
+    import rf_consistency
+    import rf_core
+    import rf_receipt
 
 router = APIRouter(prefix='/v1')
 
