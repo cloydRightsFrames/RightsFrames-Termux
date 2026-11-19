@@ -214,7 +214,7 @@ def test_missing_repo_and_bad_arguments(world):
     assert 'repository not found' in world.run(RF_REPO_DIR=str(world.tmp / 'nope')).stderr
     assert world.run('--bogus').returncode == 1
     assert world.run('--restart', 'bad name!').returncode == 1
-    assert 'rf-sync 1.0.1' in world.run('--version').stdout
+    assert 'rf-sync 1.1.0' in world.run('--version').stdout
     assert 'Fast-forward only' in world.run('--help').stdout
 
 
@@ -364,3 +364,127 @@ def test_log_records_every_run(world):
     assert sum('START' in line for line in entries) == 2
     assert sum('END rc=0' in line for line in entries) == 2
     json.dumps(entries)  # plain text, no binary noise
+
+
+@pytest.mark.parametrize('failure', ['install', 'check'])
+def test_retry_pending_dependencies_before_any_restart(world, failure):
+    calls = world.tmp / 'pip.log'
+    fail_once = world.tmp / 'fail-once'
+    fail_once.touch()
+    world.stub('rf-python', '''if [[ $1 == -m && $2 == pip ]]; then
+  echo "$3" >> "$PIP_CALLS"
+  if [[ $3 == "$FAIL_PHASE" && -e $FAIL_ONCE ]]; then rm -- "$FAIL_ONCE"; exit 1; fi
+  exit 0
+fi
+exec "$TEST_PYTHON" "$@"
+''')
+    service_log = world.tmp / 'services.log'
+    world.stub('sv', 'echo "$*" >> "$SERVICE_LOG"\n')
+    env = dict(PYTHON=str(world.bin / 'rf-python'), TEST_PYTHON=sys.executable,
+               PIP_CALLS=str(calls), FAIL_ONCE=str(fail_once), FAIL_PHASE=failure,
+               SERVICE_LOG=str(service_log))
+    target = world.commit_upstream('new lock', {'core/requirements.txt': '# changed lock\n'})
+    failed = world.run('--restart', 'rf-api', **env)
+    assert failed.returncode == 4, failed.stderr
+    assert world.head() == target
+    assert not service_log.exists()
+    count = len(calls.read_text().splitlines())
+    assert world.run('status', **env).returncode == 0
+    assert world.run('--dry-run', **env).returncode == 0
+    assert len(calls.read_text().splitlines()) == count
+
+    retried = world.run('--restart', 'rf-api', **env)
+    assert retried.returncode == 0, retried.stderr
+    assert calls.read_text().splitlines()[count:] == ['install', 'check']
+    assert service_log.read_text().splitlines() == ['restart rf-api', 'status rf-api']
+    assert world.run(**env).returncode == 0
+    assert len(calls.read_text().splitlines()) == count + 2
+
+
+def test_sync_preserves_ignored_file_and_staged_edits_on_collision(world):
+    before = world.head()
+    local = world.node / 'device.conf'
+    local.write_text('local settings\n')
+    (world.node / '.git' / 'info' / 'exclude').write_text('device.conf\n')
+    notes = world.node / 'notes.txt'
+    notes.write_text('staged\n')
+    _git(world.env, world.node, 'add', 'notes.txt')
+    notes.write_text('unstaged\n')
+    world.commit_upstream('track device configuration', {'device.conf': 'repository defaults\n'})
+    result = world.run()
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert world.head() == before
+    assert local.read_text() == 'local settings\n'
+    assert notes.read_text() == 'unstaged\n'
+    assert _git(world.env, world.node, 'show', ':notes.txt') == 'staged'
+
+
+def test_kernel_lock_serializes_worktree_even_with_another_sync_home(world):
+    import fcntl
+
+    fd = os.open(world.node / '.git', os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = world.run(RF_SYNC_HOME=str(world.tmp / 'other-sync'))
+        assert result.returncode == 1 and 'another rf-sync' in result.stderr
+    finally:
+        os.close(fd)
+    assert world.run().returncode == 0
+
+
+def test_missing_verifier_or_configured_ledger_blocks_restarts(world):
+    service_log = world.tmp / 'services.log'
+    world.stub('sv', 'echo "$*" >> "$SERVICE_LOG"\n')
+    for env in ({'PYTHON': str(world.tmp / 'missing-python')},
+                {'RF_DATA_DIR': str(world.tmp / 'missing-ledger')}):
+        result = world.run('--restart', 'rf-api', SERVICE_LOG=str(service_log), **env)
+        assert result.returncode == 4, result.stdout + result.stderr
+        assert not service_log.exists()
+
+
+def test_sync_checks_only_public_material_and_refuses_corrupted_anchors(world):
+    data = world.tmp / 'private data #1'
+    env = dict(RF_DATA_DIR=str(data))
+    subprocess.run([sys.executable, '-c',
+                    "from core import rf_core; rf_core.append_entry('evt', {'n': 1}); "
+                    "rf_core.create_anchor()"], env={**world.env, **env}, cwd=world.node, check=True)
+    private_key = data / 'signing_key.pem'
+    public_key = data / 'signing_key.pub.pem'
+    private_key.unlink()
+    data.chmod(0o750)
+    service_log = world.tmp / 'services.log'
+    world.stub('sv', 'echo "$*" >> "$SERVICE_LOG"\n')
+
+    healthy = world.run(**env)
+    assert healthy.returncode == 0, healthy.stderr
+    assert 'verified 1 entries; verified 1 anchors' in healthy.stdout
+    assert not private_key.exists()
+    assert data.stat().st_mode & 0o777 == 0o750
+
+    log = data / 'anchors.jsonl'
+    original = log.read_bytes()
+    anchor = json.loads(original)
+    anchor['signature'] = 'AAAA'
+    log.write_text(json.dumps(anchor) + '\n')
+    broken = world.run('--restart', 'rf-api', SERVICE_LOG=str(service_log), **env)
+    assert broken.returncode == 4 and 'signature invalid' in broken.stderr
+    assert not service_log.exists()
+    log.write_bytes(original)
+    public_key.unlink()
+    missing = world.run('--restart', 'rf-api', SERVICE_LOG=str(service_log), **env)
+    assert missing.returncode == 4, missing.stdout + missing.stderr
+    assert not service_log.exists() and not private_key.exists() and not public_key.exists()
+
+
+def test_read_only_check_does_not_initialize_an_empty_database(world):
+    import sqlite3
+
+    data = world.tmp / 'incomplete'
+    data.mkdir()
+    db = data / 'ledger.db'
+    db.touch()
+    result = world.run(RF_DATA_DIR=str(data))
+    assert result.returncode == 4
+    assert not (data / 'signing_key.pem').exists()
+    with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as conn:
+        assert conn.execute("SELECT name FROM sqlite_master").fetchall() == []

@@ -22,7 +22,10 @@ import secrets
 import sqlite3
 from typing import Any, Callable, Iterator
 
-import rf_core
+if __package__:
+    from . import rf_core
+else:
+    import rf_core
 
 SCOPES = frozenset({
     'entries:write', 'ledger:read', 'anchor:create', 'evidence:export', 'admin:principals',
