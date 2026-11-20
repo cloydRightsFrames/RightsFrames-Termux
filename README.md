@@ -127,6 +127,7 @@ someone other than its author) and these checks, all enforced in CI:
 | Container built as documented, run read-only, non-root, with no Linux capabilities, auth and restart durability tested, image scanned by Trivy | `container.yml` |
 | Supply-chain policy as code: every action pinned to a commit SHA, every `pip install` hash-locked, least-privilege `permissions`, a timeout on every job, no `pull_request_target`, release controls present | `tools/verify_supply_chain_policy.py` |
 | Release: annotated tag, two independent builds that must match byte for byte, SLSA Build L3 provenance, a reproducible CycloneDX SBOM attested to the release artifact, and an hourly re-verification of the latest release | `provenance-gate.yml`, `continuous-release-integrity.yml` |
+| Coverage-guided fuzzing (Atheris / libFuzzer) of the verifier's bundle, receipt and consistency-proof parsers, and of the two Merkle implementations against each other: two minutes per target on every change, fifteen each week | `fuzz.yml`, `fuzz/` |
 | OpenSSF Scorecard published weekly | `scorecard.yml` |
 
 Every dependency, including the CI tools, is installed from a hash-locked
