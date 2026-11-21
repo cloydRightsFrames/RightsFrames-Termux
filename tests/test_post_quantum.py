@@ -169,6 +169,8 @@ def test_core_creates_and_verifies_hybrid_anchors(hybrid):
     assert hybrid['a2']['merkle_root'] == rf_merkle.merkle_root(hashes)
     assert len(base64.b64decode(a1['pq_signature'])) == 3309
     assert rf_core.verify_anchors() == (True, 'verified 2 anchors')
+    assert rf_core.verify_existing_ledger() == ((True, 'verified 5 entries'),
+                                                (True, 'verified 2 anchors'))
 
 
 def test_core_auto_falls_back_to_v2_without_ml_dsa(tmp_path, monkeypatch):

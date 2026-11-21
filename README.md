@@ -149,6 +149,16 @@ someone other than its author) and these checks, all enforced in CI:
 Every dependency, including the CI tools, is installed from a hash-locked
 file, and Dependabot waits 7 days after a release before proposing it.
 
+Run the local enterprise gate from a clean checkout with Bash, Git and Python.
+
+    bash scripts/rf-enterprise-gate
+
+The gate runs the portable control-plane tests, checks both Python lock files
+and the repository's workflow policy, and reports the Git commit and tree.
+The JSON identifies the suite, executed test count and lock-file SHA-256 digests.
+An empty or skipped suite fails the gate. The full test matrix and signed
+release attestations run separately in CI.
+
 ### Verify a release yourself
 
     git clone https://github.com/cloydRightsFrames/RightsFrames-Termux.git
@@ -188,9 +198,12 @@ rewritten history, keeps uncommitted edits (re-applied after the update, or the
 checkout is rolled back exactly if they conflict), retries flaky fetches, takes the
 Termux wake lock and leaves it held for the stack (`RF_SYNC_RELEASE_WAKE_LOCK=1`
 releases it afterwards), and will not start below 10% battery while discharging. After updating it
-reinstalls the hash-locked dependencies when they changed, byte-compiles the code,
-checks the anchor log for a torn write and verifies the ledger in `RF_DATA_DIR`, and
-restarts any runit services you name.
+installs changed hash-locked dependencies and runs `pip check`. An interrupted or
+failed installation is retried on the next sync, including at the same commit.
+It verifies the configured ledger and anchors in a single read transaction
+using public keys. Supplying a missing ledger fails the check. Requested
+service restarts run only after the checks pass. The sync command uses
+`flock` from the Termux `util-linux` package to serialize updates.
 
     bash ~/RightsFrames-Termux/termux/rf-sync.sh --install   # once: adds the rf-sync command
     rf-sync --dry-run                                         # incoming commits, no changes
