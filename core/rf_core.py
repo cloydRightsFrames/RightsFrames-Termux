@@ -11,18 +11,21 @@ import os
 import secrets
 import sqlite3
 import tempfile
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Iterator
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 try:  # imported as core.rf_core (package) or as rf_core (core/ on sys.path)
     from . import rf_keyseal as _keyseal
     from . import rf_merkle as _merkle
+    from .rf_filelock import exclusive_file_lock
 except ImportError:
     import rf_keyseal as _keyseal  # type: ignore[no-redef]
     import rf_merkle as _merkle  # type: ignore[no-redef]
+    from rf_filelock import exclusive_file_lock
 
 DATA_DIR = Path(os.environ.get('RF_DATA_DIR', '/data')).resolve()
 DB_PATH = DATA_DIR / 'ledger.db'
@@ -500,17 +503,18 @@ def _validate_stored_payload(payload: str) -> None:
         raise ValueError('stored payload is not an object')
 
 
+def _ledger_rows(conn: sqlite3.Connection) -> sqlite3.Cursor:
+    return conn.execute(
+        'SELECT id, ts, entry_type, payload, prev_hash, entry_hash '
+        'FROM ledger_entries ORDER BY id ASC'
+    )
+
+
 def _ledger_snapshot() -> list[tuple[Any, ...]]:
     """Every ledger row from ONE read (a single SQLite snapshot, even under concurrent appends)."""
     conn = _connect()
     try:
-        return conn.execute(
-            '''
-            SELECT id, ts, entry_type, payload, prev_hash, entry_hash
-            FROM ledger_entries
-            ORDER BY id ASC
-            '''
-        ).fetchall()
+        return _ledger_rows(conn).fetchall()
     finally:
         conn.close()
 
@@ -519,7 +523,7 @@ def verify_chain() -> tuple[bool, str]:
     return _check_chain_rows(_ledger_snapshot())
 
 
-def _check_chain_rows(rows: list[tuple[Any, ...]]) -> tuple[bool, str]:
+def _check_chain_rows(rows: Iterable[tuple[Any, ...]]) -> tuple[bool, str]:
     expected_id = 1
     expected_previous = '0' * 64
 
@@ -553,35 +557,14 @@ def _check_chain_rows(rows: list[tuple[Any, ...]]) -> tuple[bool, str]:
         expected_previous = entry_hash
         expected_id += 1
 
-    return True, f'verified {len(rows)} entries'
+    return True, f'verified {expected_id - 1} entries'
 
 
 @contextlib.contextmanager
 def _anchor_lock() -> Iterator[None]:
     _secure_directory()
-    if os.name == 'nt':
-        import msvcrt
-        with LOCK_PATH.open('a+b') as handle:
-            if handle.seek(0, os.SEEK_END) == 0:
-                handle.write(b'\x00')
-                handle.flush()
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        return
-
-    import fcntl
-    with LOCK_PATH.open('a+b') as handle:
-        os.chmod(LOCK_PATH, 0o600)
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    with exclusive_file_lock(LOCK_PATH):
+        yield
 
 class AnchorLogTornError(ValueError):
     """The anchor log ends in an incomplete line: an append was interrupted (crash, power loss)."""
@@ -781,7 +764,7 @@ def create_anchor() -> dict[str, Any]:
 
 def verify_anchors() -> tuple[bool, str]:
     try:
-        _, public, current_key_id = load_or_create_keypair()
+        _, _, current_key_id = load_or_create_keypair()
         anchors = _read_anchors()
     except AnchorLogTornError:
         return False, ANCHOR_TORN_MESSAGE
@@ -791,6 +774,34 @@ def verify_anchors() -> tuple[bool, str]:
     if not anchors:
         return True, 'no anchors'
 
+    return _verify_anchor_records(anchors, current_key_id)
+
+
+def verify_existing_ledger() -> tuple[tuple[bool, str], tuple[bool, str]]:
+    """Check an existing ledger and its anchors using public keys and one read transaction."""
+    # Read anchors first so concurrently appended anchors never outrun the DB snapshot.
+    anchors = _read_anchors()
+    uri = DB_PATH.as_uri() + '?mode=ro'
+    with contextlib.closing(sqlite3.connect(uri, uri=True, timeout=5)) as conn:
+        conn.execute('BEGIN')
+        chain = _check_chain_rows(_ledger_rows(conn))
+        if not chain[0]:
+            return chain, (False, 'anchor checks skipped after chain failure')
+        if not anchors:
+            return chain, (True, 'no anchors')
+        public_key = serialization.load_pem_public_key(PUBLIC_KEY_PATH.read_bytes())
+        if not isinstance(public_key, Ed25519PublicKey):
+            return chain, (False, 'expected an Ed25519 public key')
+        key_id = _key_id(public_key.public_bytes(serialization.Encoding.Raw,
+                                                 serialization.PublicFormat.Raw))
+        if KEY_ID_PATH.exists() and KEY_ID_PATH.read_text(encoding='utf-8').strip() != key_id:
+            return chain, (False, 'signing key identity mismatch')
+        return chain, _verify_anchor_records(anchors, key_id, conn, public_key)
+
+
+def _verify_anchor_records(anchors: list[dict[str, Any]], current_key_id: str,
+                           snapshot: sqlite3.Connection | None = None,
+                           public_key: Ed25519PublicKey | None = None) -> tuple[bool, str]:
     previous_anchor_hash = '0' * 64
     previous_ledger_count = 0
     previous_created = ''
@@ -869,9 +880,8 @@ def verify_anchors() -> tuple[bool, str]:
             return False, f'anchor hash mismatch at {index}'
 
         try:
-            public_key = serialization.load_pem_public_key(
-                PUBLIC_KEY_PATH.read_bytes()
-            )
+            if public_key is None:
+                public_key = serialization.load_pem_public_key(PUBLIC_KEY_PATH.read_bytes())
             public_key.verify(signature, anchor_hash.encode('ascii'))
         except Exception:
             return False, f'anchor signature invalid at {index}'
@@ -899,18 +909,14 @@ def verify_anchors() -> tuple[bool, str]:
         previous_ledger_count = ledger_count
         previous_created = created
 
-    conn = _connect()
     try:
-        row = conn.execute(
-            'SELECT id, entry_hash FROM ledger_entries '
-            'ORDER BY id DESC LIMIT 1'
-        ).fetchone()
-    finally:
-        conn.close()
-
-    try:
-        anchor_conn = _connect()
-        try:
+        with (contextlib.nullcontext(snapshot) if snapshot is not None
+              else contextlib.closing(_connect())) as anchor_conn:
+            if snapshot is None:
+                anchor_conn.execute('BEGIN')
+            row = anchor_conn.execute(
+                'SELECT id, entry_hash FROM ledger_entries ORDER BY id DESC LIMIT 1'
+            ).fetchone()
             for index, item in enumerate(anchors, 1):
                 anchored_count = int(item['ledger_count'])
                 if anchored_count == 0:
@@ -948,8 +954,6 @@ def verify_anchors() -> tuple[bool, str]:
                     for index, claimed in claims:
                         if not secrets.compare_digest(roots[count], claimed):
                             return False, f'merkle root mismatch at anchor {index}'
-        finally:
-            anchor_conn.close()
     except sqlite3.Error:
         return False, 'ledger unreadable'
 
