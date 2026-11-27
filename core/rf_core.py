@@ -160,6 +160,9 @@ def _atomic_write(path: Path, data: bytes, mode: int) -> None:
             try:
                 os.chmod(path, mode)
             except OSError:
+                # Best-effort on non-POSIX platforms: chmod may be unsupported
+                # or ineffective under Windows ACL semantics. Keep write atomic
+                # and non-fatal here by design.
                 pass
     finally:
         try:
