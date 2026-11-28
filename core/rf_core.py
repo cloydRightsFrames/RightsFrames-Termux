@@ -10,6 +10,7 @@ import json
 import os
 import secrets
 import sqlite3
+import stat
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -27,7 +28,7 @@ except ImportError:
     import rf_merkle as _merkle  # type: ignore[no-redef]
     from rf_filelock import exclusive_file_lock
 
-DATA_DIR = Path(os.environ.get('RF_DATA_DIR', '/data')).resolve()
+DATA_DIR = Path(os.environ.get('RF_DATA_DIR', '/data')).absolute()
 DB_PATH = DATA_DIR / 'ledger.db'
 PRIVATE_KEY_PATH = DATA_DIR / 'signing_key.pem'
 PUBLIC_KEY_PATH = DATA_DIR / 'signing_key.pub.pem'
@@ -69,14 +70,27 @@ PQ_PUBLIC_KEY_NAME = 'signing_key_mldsa65.pub.pem'
 
 
 def _secure_directory() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # Restrict the leaf directory from creation; ancestors must be trusted.
+    DATA_DIR.mkdir(mode=stat.S_IRWXU, parents=True, exist_ok=True)
+    if os.name != "posix":
+        # Windows ACL enforcement is a separate platform requirement.
+        return
+    fd = os.open(DATA_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        # Reviewed false positive: 0700 grants owner-only directory access and traversal; 0644 would be unsafe.
-        os.chmod(DATA_DIR, 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
-    except OSError:
-        # Best effort: filesystems without POSIX modes (FAT/exFAT on Android shared
-        # storage, some Windows volumes) reject chmod; the directory still works.
-        pass
+        info = os.fstat(fd)
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid():
+            raise PermissionError("Unsafe data directory ownership")
+        os.fchmod(fd, stat.S_IRWXU)
+        verified = os.fstat(fd)
+        current = DATA_DIR.lstat()
+        if stat.S_IMODE(verified.st_mode) != stat.S_IRWXU:
+            raise PermissionError("Unsafe data directory permissions")
+        if not stat.S_ISDIR(current.st_mode) or (
+            current.st_dev, current.st_ino
+        ) != (verified.st_dev, verified.st_ino):
+            raise PermissionError("Data directory identity changed")
+    finally:
+        os.close(fd)
 
 
 def _utc_now() -> str:
@@ -116,31 +130,46 @@ def _key_id(public_key: bytes) -> str:
 
 def _atomic_write(path: Path, data: bytes, mode: int) -> None:
     _secure_directory()
-    fd, tmp_name = tempfile.mkstemp(prefix=f'.{path.name}.', dir=DATA_DIR)
+    if path.parent != DATA_DIR:
+        raise ValueError("Atomic write destination must be inside DATA_DIR")
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=DATA_DIR)
     tmp_path = Path(tmp_name)
     try:
-        if hasattr(os, "fchmod"):
-            os.fchmod(fd, mode)
-        with os.fdopen(fd, 'wb') as handle:
+        handle = os.fdopen(fd, "wb")
+        fd = -1
+        with handle:
+            if os.name == "posix":
+                os.fchmod(handle.fileno(), mode)
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid():
+                    raise PermissionError("Unsafe temporary file identity")
+                if stat.S_IMODE(info.st_mode) != mode:
+                    raise PermissionError("Unsafe temporary file permissions")
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
-        try:
-            os.chmod(path, mode)
-        except OSError:
-            # Best effort: the mode was already applied with fchmod before the data
-            # was written; this repeat only matters where fchmod is unavailable.
-            pass
-        if os.name == 'posix':
-            dir_fd = os.open(str(DATA_DIR), os.O_RDONLY)
+        if os.name == "posix":
+            dir_fd = os.open(DATA_DIR, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
                 os.fsync(dir_fd)
             finally:
                 os.close(dir_fd)
+        else:
+            # Preserve Windows compatibility; POSIX modes do not enforce ACLs.
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                # Best-effort on non-POSIX platforms: chmod may be unsupported
+                # or ineffective under Windows ACL semantics. Keep write atomic
+                # and non-fatal here by design.
+                pass
     finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
+        try:
+            if fd != -1:
+                os.close(fd)
+        finally:
+            tmp_path.unlink(missing_ok=True)
 
 
 def _write_text_atomic(path: Path, value: str, mode: int) -> None:
