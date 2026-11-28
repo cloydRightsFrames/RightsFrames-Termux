@@ -31,6 +31,23 @@ edited entry, a quantum-forged receipt and an attacker ledger's receipt are
 rejected. Exit status 0 means every expectation held. See [docs/EVALUATION.md](docs/EVALUATION.md) for the
 threat model, verification paths, and known limitations.
 
+## Commercial Pilot
+
+A fixed-price, 30-day pilot puts RightsFrames on one of your AI-agent or
+operational workflows:
+
+- **Scope:** one workflow instrumented so that each action is recorded as a
+  hash-chained ledger entry under signed anchors.
+- **Deliverables:** evidence bundles and single-entry receipts that your
+  auditors verify offline with `verifier/rf_verify.py`, anchor pins held on
+  your side, and a written report on what was recorded, what the evidence
+  proves and what it does not.
+- **Price:** USD 2,500, invoiced after a scoping call.
+
+A smaller first step is a USD 150 security-architecture consultation at
+[rightsframes.online](https://rightsframes.online). To start either, email
+charlieloydrightsframes2027@gmail.com with "Pilot" in the subject.
+
 ## AI-Assisted Development — Disclosure
 
 This project was built through extensive AI-assisted development. Every
@@ -207,7 +224,9 @@ anchor hashes pinned outside the operator's infrastructure (`pins/`,
 `--pin-anchor`) detect that. Entries written after the newest anchor are not
 covered by any signature until the next anchor. No third-party security
 audit has been performed yet; [docs/INDEPENDENT-REVIEW-SCOPE.md](docs/INDEPENDENT-REVIEW-SCOPE.md)
-is the statement of work for one.
+is the statement of work for one. Changes to `main` need two approvals, but
+today those come from the maintainer's second account and one collaborator,
+so they are not an independent code review.
 
 ## License
 
