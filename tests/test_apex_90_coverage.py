@@ -20,7 +20,7 @@ def test_policy_load_paths(tmp_path):
             {
                 "schema": "rf.policy.v1",
                 "mode": "fail-closed",
-                "rules": [],
+                "required": {"tests_pass": True},
             }
         ),
         encoding="utf-8",

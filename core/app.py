@@ -14,13 +14,17 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from core import rf_core as _rf_core
-from core.rf_core import (
-    MAX_ENTRY_TYPE,
-    append_entry,
-    create_anchor,
-    health,
-)
+if __package__:  # uvicorn core.app:app from the repository root
+    from . import rf_core as _rf_core
+    from .rf_api_v1 import router as _api_v1_router
+else:  # uvicorn app:app from core/
+    import rf_core as _rf_core
+    from rf_api_v1 import router as _api_v1_router
+
+MAX_ENTRY_TYPE = _rf_core.MAX_ENTRY_TYPE
+append_entry = _rf_core.append_entry
+create_anchor = _rf_core.create_anchor
+health = _rf_core.health
 
 MAX_REQUEST_BYTES = 393216
 API_KEY = os.environ.get('RF_API_KEY', '').strip()
@@ -256,6 +260,4 @@ def anchor(
         ) from exc
 
 # --- API v1: per-principal credentials, scopes, audited operations ---
-from rf_api_v1 import router as _api_v1_router  # noqa: E402
-
 app.include_router(_api_v1_router)

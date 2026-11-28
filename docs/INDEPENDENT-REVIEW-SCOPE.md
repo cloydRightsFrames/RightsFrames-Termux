@@ -104,8 +104,6 @@ Not assumed: compromise of the verifying party's machine, of Python, or of the
 - The Android/Termux node, `termux/`, nginx, Cloudflare, DreamHost and any website.
 - `enterprise/`, `integrations/`, the release workflows and supply-chain tooling
   (covered separately by SLSA provenance and OpenSSF Scorecard).
-- Root-level one-off maintenance scripts (`rf_historical_51_88_*.py`, `verify_51_88*.py`,
-  `rf_verify_all_commits_continue.sh`).
 - Truthfulness of what is logged: the ledger proves integrity, not accuracy.
 - Correctness of Ed25519, ML-DSA-65, SHA-256, Argon2id, scrypt and AES-GCM themselves.
 

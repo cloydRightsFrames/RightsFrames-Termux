@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -26,6 +28,20 @@ def _load(name, rel):
 
 verifier = _load('rf_verify_apitest', 'verifier/rf_verify.py')
 ALL = ['admin:principals', 'ledger:read', 'entries:write', 'anchor:create', 'evidence:export']
+
+
+@pytest.mark.parametrize(('directory', 'target'), [(ROOT, 'core.app:app'), (ROOT / 'core', 'app:app')])
+def test_uvicorn_targets_work_in_a_fresh_interpreter(directory, target, tmp_path):
+    env = {**os.environ, 'RF_DATA_DIR': str(tmp_path), 'RF_ALLOWED_HOSTS': 'localhost'}
+    env.pop('PYTHONPATH', None)
+    code = (
+        'import sys\n'
+        'from uvicorn.importer import import_from_string\n'
+        'from fastapi.testclient import TestClient\n'
+        'with TestClient(import_from_string(sys.argv[1]), base_url="http://localhost") as client:\n'
+        '    assert client.get("/v1/ledger/head").status_code == 401\n'
+    )
+    subprocess.run([sys.executable, '-c', code, target], cwd=directory, env=env, check=True, timeout=30)
 
 
 def _point(mp, base):

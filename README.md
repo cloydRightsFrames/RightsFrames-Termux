@@ -31,6 +31,23 @@ edited entry, a quantum-forged receipt and an attacker ledger's receipt are
 rejected. Exit status 0 means every expectation held. See [docs/EVALUATION.md](docs/EVALUATION.md) for the
 threat model, verification paths, and known limitations.
 
+## Commercial Pilot
+
+A fixed-price, 30-day pilot puts RightsFrames on one of your AI-agent or
+operational workflows:
+
+- **Scope:** one workflow instrumented so that each action is recorded as a
+  hash-chained ledger entry under signed anchors.
+- **Deliverables:** evidence bundles and single-entry receipts that your
+  auditors verify offline with `verifier/rf_verify.py`, anchor pins held on
+  your side, and a written report on what was recorded, what the evidence
+  proves and what it does not.
+- **Price:** USD 2,500, invoiced after a scoping call.
+
+A smaller first step is a USD 150 security-architecture consultation at
+[rightsframes.online](https://rightsframes.online). To start either, email
+charlieloydrightsframes2027@gmail.com with "Pilot" in the subject.
+
 ## AI-Assisted Development — Disclosure
 
 This project was built through extensive AI-assisted development. Every
@@ -132,6 +149,16 @@ someone other than its author) and these checks, all enforced in CI:
 Every dependency, including the CI tools, is installed from a hash-locked
 file, and Dependabot waits 7 days after a release before proposing it.
 
+Run the local enterprise gate from a clean checkout with Bash, Git and Python.
+
+    bash scripts/rf-enterprise-gate
+
+The gate runs the portable control-plane tests, checks both Python lock files
+and the repository's workflow policy, and reports the Git commit and tree.
+The JSON identifies the suite, executed test count and lock-file SHA-256 digests.
+An empty or skipped suite fails the gate. The full test matrix and signed
+release attestations run separately in CI.
+
 ### Verify a release yourself
 
     git clone https://github.com/cloydRightsFrames/RightsFrames-Termux.git
@@ -171,9 +198,12 @@ rewritten history, keeps uncommitted edits (re-applied after the update, or the
 checkout is rolled back exactly if they conflict), retries flaky fetches, takes the
 Termux wake lock and leaves it held for the stack (`RF_SYNC_RELEASE_WAKE_LOCK=1`
 releases it afterwards), and will not start below 10% battery while discharging. After updating it
-reinstalls the hash-locked dependencies when they changed, byte-compiles the code,
-checks the anchor log for a torn write and verifies the ledger in `RF_DATA_DIR`, and
-restarts any runit services you name.
+installs changed hash-locked dependencies and runs `pip check`. An interrupted or
+failed installation is retried on the next sync, including at the same commit.
+It verifies the configured ledger and anchors in a single read transaction
+using public keys. Supplying a missing ledger fails the check. Requested
+service restarts run only after the checks pass. The sync command uses
+`flock` from the Termux `util-linux` package to serialize updates.
 
     bash ~/RightsFrames-Termux/termux/rf-sync.sh --install   # once: adds the rf-sync command
     rf-sync --dry-run                                         # incoming commits, no changes
@@ -194,7 +224,9 @@ anchor hashes pinned outside the operator's infrastructure (`pins/`,
 `--pin-anchor`) detect that. Entries written after the newest anchor are not
 covered by any signature until the next anchor. No third-party security
 audit has been performed yet; [docs/INDEPENDENT-REVIEW-SCOPE.md](docs/INDEPENDENT-REVIEW-SCOPE.md)
-is the statement of work for one.
+is the statement of work for one. Changes to `main` need two approvals, but
+today those come from the maintainer's second account and one collaborator,
+so they are not an independent code review.
 
 ## License
 
