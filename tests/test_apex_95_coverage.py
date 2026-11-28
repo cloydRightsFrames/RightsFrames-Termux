@@ -32,13 +32,18 @@ def isolate_rf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_rf_secure_directory_oserror(tmp_path, monkeypatch):
+    import os
+    import pytest
+    if os.name != 'posix':
+        pytest.skip('POSIX permission enforcement')
     isolate_rf(tmp_path, monkeypatch)
     monkeypatch.setattr(
         rf.os,
-        'chmod',
+        'fchmod',
         lambda path, mode: (_ for _ in ()).throw(OSError('chmod denied')),
     )
-    rf._secure_directory()
+    with pytest.raises(OSError, match='chmod denied'):
+        rf._secure_directory()
 
 
 def test_rf_atomic_write_chmod_failure(tmp_path, monkeypatch):

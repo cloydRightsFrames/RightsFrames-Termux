@@ -3,8 +3,7 @@
 #  rf-sync.sh — safe git pull and sync of RightsFrames on the Termux node
 # =============================================================================
 #  Brings ~/RightsFrames-Termux up to date with GitHub main, then re-syncs what
-#  depends on the code. One idempotent run; it either completes or leaves the
-#  checkout exactly as it was.
+#  depends on the code. Exit 4 keeps the updated checkout for a verification retry.
 #
 #    bash termux/rf-sync.sh                 # pull + sync
 #    bash termux/rf-sync.sh --dry-run       # show incoming commits, change nothing
@@ -27,14 +26,14 @@
 #      it here would also release the lock termux/rf-pinnacle.sh holds for the
 #      stack, and Doze could then freeze the node. Set RF_SYNC_RELEASE_WAKE_LOCK=1
 #      on a phone that does not run the stack to release it when the run ends.
-#    * One at a time. A lock prevents concurrent runs; a stale lock is reclaimed.
+#    * One at a time. A kernel lock covers this Git worktree, including stale PID-lock cleanup.
 #
 #  After a successful update it:
 #    * reinstalls the hash-locked runtime dependencies if core/requirements.txt changed;
 #    * byte-compiles core/, verifier/ and tools/ to catch a broken checkout early;
 #    * if RF_DATA_DIR holds a ledger: checks the anchor log for a torn write and
 #      verifies the hash chain and anchors (read-only; repairs are never automatic);
-#    * restarts the runit services named with --restart;
+#    * restarts the runit services named with --restart only after all requested checks pass;
 #    * points out when termux/rf-pinnacle.sh changed (re-run it to apply).
 #
 #  Exit codes: 0 synced or already current, 1 error, 2 local edits conflict with
@@ -46,7 +45,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly RF_SYNC_VERSION="1.0.1"
+readonly RF_SYNC_VERSION="1.1.0"
 readonly EXPECTED_REPO="cloydRightsFrames/RightsFrames-Termux"
 
 PREFIX="${PREFIX:-/data/data/com.termux/files/usr}"
@@ -68,6 +67,8 @@ STASH_SHA=""
 PRE_HEAD=""
 WAKE_LOCK_TAKEN=0
 LOCK_OWNED=0
+SYNC_GIT_DIR=""
+DEPENDENCIES_PENDING=""
 
 # ---------------------------------------------------------------- output ---
 if [[ -t 1 ]]; then
@@ -97,7 +98,7 @@ while (($#)); do
     --install) MODE="install" ;;
     --restart)
       [[ $# -ge 2 && -n $2 ]] || die "--restart needs a runit service name"
-      [[ $2 =~ ^[A-Za-z0-9._-]+$ ]] || die "invalid service name: $2"
+      [[ $2 =~ ^[A-Za-z0-9._-]+$ && $2 != . && $2 != .. ]] || die "invalid service name: $2"
       RESTARTS+=("$2"); shift ;;
     --repo)
       [[ $# -ge 2 && -n $2 ]] || die "--repo needs a directory"
@@ -123,26 +124,36 @@ g() { git -C "$RF_REPO_DIR" "$@"; }
 # Only ever remove a lock this run created; a refused run must not free another's lock.
 release_lock() {
   ((LOCK_OWNED)) || return 0
-  rm -rf "$LOCK_DIR" 2>/dev/null || true
+  rm -f -- "$LOCK_DIR/pid" && rmdir -- "$LOCK_DIR" || warn "Lock" "could not remove $LOCK_DIR"
   LOCK_OWNED=0
 }
 
 acquire_lock() {
-  if mkdir "$LOCK_DIR" 2>/dev/null; then
-    LOCK_OWNED=1
-    printf '%s\n' "$$" >"$LOCK_DIR/pid"
-    return 0
+  command -v flock >/dev/null || die "flock is required (pkg install util-linux)"
+  exec {sync_lock_fd}<"$SYNC_GIT_DIR"
+  flock -n "$sync_lock_fd" || die "another rf-sync is running for this worktree"
+  if [[ ! $RF_SYNC_HOME -ef $SYNC_GIT_DIR ]]; then
+    exec {sync_home_fd}<"$RF_SYNC_HOME"
+    flock -n "$sync_home_fd" || die "another rf-sync is running in $RF_SYNC_HOME"
   fi
-  local holder
-  holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-  if [[ $holder =~ ^[0-9]+$ ]] && kill -0 "$holder" 2>/dev/null; then
-    die "another rf-sync is running (pid $holder)"
+  # Keep the PID lock for older rf-sync processes that do not know about flock.
+  local holder claim
+  if [[ -e $LOCK_DIR ]]; then
+    holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    [[ $holder =~ ^[1-9][0-9]*$ ]] || die "sync lock has no valid owner record: $LOCK_DIR"
+    if kill -0 "$holder" 2>/dev/null; then
+      die "another rf-sync is running (pid $holder)"
+    fi
+    warn "Lock" "reclaiming stale lock from pid $holder"
+    rm -- "$LOCK_DIR/pid" && rmdir -- "$LOCK_DIR" || die "could not reclaim $LOCK_DIR"
   fi
-  warn "Lock" "reclaiming stale lock from pid ${holder:-unknown}"
-  rm -rf "$LOCK_DIR"
-  mkdir "$LOCK_DIR" 2>/dev/null || die "another rf-sync took the lock first"
+  # Publish a complete owner record in one rename, even if Android kills the shell.
+  claim="$(mktemp -d "$RF_SYNC_HOME/.claim.XXXXXXXX")"
+  if ! printf '%s\n' "$$" >"$claim/pid" || ! mv -nT -- "$claim" "$LOCK_DIR" || [[ -d $claim ]]; then
+    rm -f -- "$claim/pid"; rmdir -- "$claim"
+    die "could not acquire $LOCK_DIR"
+  fi
   LOCK_OWNED=1
-  printf '%s\n' "$$" >"$LOCK_DIR/pid"
 }
 
 # If anything fails while edits are stashed, put the checkout back exactly as it was.
@@ -197,11 +208,10 @@ check_repo() {
   expected="github.com/$(printf '%s' "$EXPECTED_REPO" | tr '[:upper:]' '[:lower:]')"
   [[ $normalized == "$expected" ]] || die "origin is $url, expected https://github.com/$EXPECTED_REPO"
   ok "Repository" "$RF_REPO_DIR"
-  local state_dir
-  state_dir="$(g rev-parse --git-dir)"
-  [[ $state_dir = /* ]] || state_dir="$RF_REPO_DIR/$state_dir"
+  SYNC_GIT_DIR="$(g rev-parse --absolute-git-dir)"
+  DEPENDENCIES_PENDING="$SYNC_GIT_DIR/rf-sync-requirements.pending"
   for marker in MERGE_HEAD rebase-merge rebase-apply CHERRY_PICK_HEAD REVERT_HEAD; do
-    [[ -e $state_dir/$marker ]] && die "a git $marker operation is in progress in $RF_REPO_DIR; finish or abort it first"
+    [[ -e $SYNC_GIT_DIR/$marker ]] && die "a git $marker operation is in progress in $RF_REPO_DIR; finish or abort it first"
   done
   local branch
   branch="$(g symbolic-ref --quiet --short HEAD 2>/dev/null)" || die "HEAD is detached; check out $RF_SYNC_BRANCH first"
@@ -275,13 +285,14 @@ post_sync() {
   local old="$1" new="$2" changed rc=0
   changed="$(g diff --name-only "$old" "$new")"
 
-  if grep -qx 'core/requirements.txt' <<<"$changed"; then
-    info "Dependencies" "core/requirements.txt changed; installing hash-locked set"
+  if [[ -e $DEPENDENCIES_PENDING ]]; then
+    info "Dependencies" "installing pending hash-locked runtime set"
     if (cd "$RF_REPO_DIR" && "$PYTHON" -m pip install --quiet --disable-pip-version-check \
-          --require-hashes -r core/requirements.txt >>"$LOG_FILE" 2>&1); then
-      ok "Dependencies" "installed"
+          --require-hashes -r core/requirements.txt && "$PYTHON" -m pip check) >>"$LOG_FILE" 2>&1; then
+      rm -- "$DEPENDENCIES_PENDING" || return 4
+      ok "Dependencies" "installed and checked"
     else
-      fail "Dependencies" "pip install failed (see $LOG_FILE); the code is updated"
+      fail "Dependencies" "install or pip check failed (see $LOG_FILE); rf-sync will retry"
       rc=4
     fi
   else
@@ -296,12 +307,20 @@ post_sync() {
       rc=4
     fi
   else
-    warn "Byte-compile" "$PYTHON not found; skipped"
+    fail "Byte-compile" "$PYTHON not found"
+    rc=4
   fi
 
-  if [[ -n ${RF_DATA_DIR:-} && -f $RF_DATA_DIR/ledger.db ]]; then
+  if [[ -z ${RF_DATA_DIR:-} ]]; then
+    info "Ledger" "RF_DATA_DIR not set; not verified"
+  elif [[ ! -f $RF_DATA_DIR/ledger.db ]]; then
+    fail "Ledger" "configured RF_DATA_DIR has no ledger.db"
+    rc=4
+  else
+    local data_dir
+    data_dir="$(cd -- "$RF_DATA_DIR" && pwd -P)" || return 4
     local torn_rc=0
-    (cd "$RF_REPO_DIR" && "$PYTHON" tools/rf_repair_anchor_log.py --data-dir "$RF_DATA_DIR" --check \
+    (cd "$RF_REPO_DIR" && "$PYTHON" tools/rf_repair_anchor_log.py --data-dir "$data_dir" --check \
        >>"$LOG_FILE" 2>&1) || torn_rc=$?
     if ((torn_rc == 2)); then
       fail "Anchor log" "torn write detected; run: python tools/rf_repair_anchor_log.py --data-dir $RF_DATA_DIR"
@@ -312,12 +331,11 @@ post_sync() {
     else
       ok "Anchor log" "intact"
       local report
-      if report="$(cd "$RF_REPO_DIR" && RF_DATA_DIR="$RF_DATA_DIR" "$PYTHON" -c '
+      if report="$(cd "$RF_REPO_DIR" && RF_DATA_DIR="$data_dir" "$PYTHON" -c '
 import json, sys
 sys.path.insert(0, ".")
 from core import rf_core
-chain = rf_core.verify_chain()
-anchors = rf_core.verify_anchors()
+chain, anchors = rf_core.verify_existing_ledger()
 print(json.dumps({"chain": chain, "anchors": anchors}))
 sys.exit(0 if chain[0] and anchors[0] else 1)' 2>>"$LOG_FILE")"; then
         ok "Ledger" "$(printf '%s' "$report" | sed -E 's/.*"chain": \[true, "([^"]*)"\].*"anchors": \[true, "([^"]*)"\].*/\1; \2/')"
@@ -326,14 +344,16 @@ sys.exit(0 if chain[0] and anchors[0] else 1)' 2>>"$LOG_FILE")"; then
         rc=4
       fi
     fi
-  else
-    info "Ledger" "RF_DATA_DIR not set or no ledger.db; not verified"
   fi
 
   if grep -qx 'termux/rf-pinnacle.sh' <<<"$changed"; then
     warn "Node installer" "rf-pinnacle.sh changed; apply with: bash $RF_REPO_DIR/termux/rf-pinnacle.sh --dry-run"
   fi
 
+  if ((rc != 0)); then
+    ((${#RESTARTS[@]} == 0)) || warn "Restart" "verification failed; requested restarts skipped"
+    return "$rc"
+  fi
   local svc
   for svc in ${RESTARTS[@]+"${RESTARTS[@]}"}; do
     if ! command -v sv >/dev/null 2>&1; then
@@ -370,7 +390,7 @@ do_sync() {
 
   incoming="$(g rev-list --count "HEAD..$target")"
   info "Incoming" "$incoming commit(s)"
-  g log --format='      %h %s' "HEAD..$target" | head -n 20
+  g log --max-count=20 --format='      %h %s' "HEAD..$target"
   ((incoming > 20)) && printf '      … and %d more\n' "$((incoming - 20))"
   if ((DRY_RUN)); then
     g diff --stat "HEAD" "$target" | tail -n 1 | sed 's/^/      /'
@@ -378,6 +398,13 @@ do_sync() {
     return 0
   fi
 
+  # Write before the fast-forward. A killed process cannot lose an installation
+  # that still needs to run, even when the next sync is already at the target.
+  local lock_change
+  lock_change="$(g diff --name-only "$PRE_HEAD" "$target" -- core/requirements.txt)"
+  if [[ -n $lock_change ]]; then
+    touch -- "$DEPENDENCIES_PENDING" || die "could not record pending dependency installation"
+  fi
   if [[ -n $(g status --porcelain --untracked-files=no) ]]; then
     g stash push --quiet -m "rf-sync $(date -u +%Y%m%dT%H%M%SZ) before $(short "$target")" \
       || die "could not stash local edits"
@@ -385,7 +412,7 @@ do_sync() {
     info "Local edits" "stashed as $(short "$STASH_SHA")"
   fi
 
-  if ! g merge --ff-only --quiet "$target" 2>>"$LOG_FILE"; then
+  if ! g merge --ff-only --no-overwrite-ignore --quiet "$target" 2>>"$LOG_FILE"; then
     # Most often an untracked file that the update would overwrite.
     fail "Update" "fast-forward refused (see $LOG_FILE); nothing changed"
     restore_on_error || true
@@ -433,8 +460,8 @@ main() {
     do_install
     return 0
   fi
-  acquire_lock
   check_repo
+  acquire_lock
   if [[ $MODE == status ]]; then
     fetch_remote
     show_status

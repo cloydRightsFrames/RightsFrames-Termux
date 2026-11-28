@@ -28,8 +28,8 @@ from pathlib import Path
 
 PRODUCT = 'RightsFrames-Termux'
 SPEC_VERSION = '1.6'
-_REQ = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)')
-_HASH = re.compile(r'--hash=sha256:([0-9a-f]{64})')
+_REQ = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)==([0-9][A-Za-z0-9._+!-]*)(?=[\s;]|$)')
+_HASH = re.compile(r'(?<!\S)--hash=sha256:([0-9a-f]{64})(?!\S)')
 _SERIAL = re.compile(r'urn:uuid:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
 
 
@@ -46,7 +46,7 @@ def parse_lock(text: str) -> dict[str, tuple[str, frozenset[str]]]:
     logical: list[str] = []
     buf = ''
     for raw in text.splitlines():
-        line = raw.split('#', 1)[0].rstrip() if raw.lstrip().startswith('#') else raw.rstrip()
+        line = raw.partition('#')[0].rstrip()
         if line.endswith('\\'):
             buf += line[:-1] + ' '
             continue
@@ -63,9 +63,15 @@ def parse_lock(text: str) -> dict[str, tuple[str, frozenset[str]]]:
         if not match:
             raise SBOMError(f'unpinned or unsupported requirement: {stripped[:80]}')
         name = normalize(match.group(1))
-        hashes = frozenset(_HASH.findall(stripped))
-        if not hashes:
+        marker, sep, suffix = stripped[match.end():].partition('--hash=')
+        if marker.strip() and not marker.lstrip().startswith(';'):
+            raise SBOMError(f'unexpected requirement text: {name}')
+        if not sep:
             raise SBOMError(f'requirement without hashes: {name}')
+        hashes_found = [_HASH.fullmatch(token) for token in (sep + suffix).split()]
+        if not all(hashes_found):
+            raise SBOMError(f'invalid distribution hash or unsupported option: {name}')
+        hashes = frozenset(item.group(1) for item in hashes_found if item is not None)
         if name in packages:
             raise SBOMError(f'duplicate requirement: {name}')
         packages[name] = (match.group(2), hashes)
