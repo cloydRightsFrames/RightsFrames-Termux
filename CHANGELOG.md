@@ -6,7 +6,14 @@ every release is an annotated tag built, reproduced and attested by
 
 ## Unreleased (v0.4.0)
 
+### Removed
+- Root-level one-off maintenance scripts that were not part of the product:
+  `rf_historical_51_88_gitworktree.py`, `rf_historical_51_88_pinnacle.py`,
+  `verify_51_88.py`, `verify_51_88_no_venv.py`, `rf_verify_all_commits_continue.sh`
+  and `rf-lynis-assurance.sh`. They remain in git history.
+
 ### Added
+- README: commercial pilot offer (30 days, USD 2,500) and how to start one.
 - `rf.anchor.v4`: every hybrid (Ed25519 + ML-DSA-65) anchor now also signs an RFC 9162
   Merkle root over the entries it covers (`core/rf_merkle.py`), with its own ML-DSA
   context string. The core and the independent verifier recompute every root; after a

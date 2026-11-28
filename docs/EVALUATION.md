@@ -163,9 +163,9 @@ Strict flags for auditors:
 - **Production Termux stack excluded.** The IDS, threat-intel feeds, backup
   verification, and process supervision used on the author's Android node are
   not in this repository; `termux/rf-pinnacle.sh` is the node installer only.
-- **Maintenance scripts.** Root-level `rf_historical_51_88_*.py`,
-  `verify_51_88*.py` and `rf_verify_all_commits_continue.sh` are one-off
-  history-verification utilities and are not part of the product surface.
+- **Code review.** Changes to `main` need two approvals, but today those come
+  from the maintainer's second account and one collaborator, so they are not
+  an independent code review.
 
 ## License and contact
 
