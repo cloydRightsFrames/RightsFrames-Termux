@@ -124,6 +124,7 @@ print(json.dumps({"writer":rf_auth.create_principal("pilot-writer", ["entries:wr
             process = multiprocessing.get_context("spawn").Process(
                 target=_serve_http, args=(env, port), daemon=True)
             process.start()
+            last_startup_error = None
             for _ in range(90):
                 if not process.is_alive():
                     raise AssertionError(f"API startup exited early (exit={process.exitcode})")
@@ -131,10 +132,12 @@ print(json.dumps({"writer":rf_auth.create_principal("pilot-writer", ["entries:wr
                     status, _ = api(url+"/health", timeout=2)
                     if status == 200:
                         break
-                except (urllib.error.URLError, TimeoutError, OSError):
-                    pass
+                except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                    last_startup_error = exc
                 time.sleep(.25)
             else:
+                if last_startup_error is not None:
+                    raise AssertionError(f"API failed loopback readiness; last error: {last_startup_error!r}")
                 raise AssertionError("API failed loopback readiness")
             results["http_startup"] = "PASS"
             from core import rf_agent_gate as gate
