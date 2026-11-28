@@ -6,7 +6,6 @@ Refuses to count ML-DSA/receipts as passed when unavailable.
 """
 from __future__ import annotations
 
-import base64
 import concurrent.futures
 import hashlib
 import importlib.metadata
@@ -14,7 +13,6 @@ import json
 import multiprocessing
 import os
 from pathlib import Path
-import shutil
 import socket
 import subprocess
 import sys

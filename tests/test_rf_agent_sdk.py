@@ -5,8 +5,6 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from core import rf_agent_gate as gate
 
 ROOT = Path(__file__).resolve().parents[1]
 
