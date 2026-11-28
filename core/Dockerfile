@@ -3,7 +3,7 @@
 # The API imports both `core.*` and top-level modules from core/, and the
 # evidence-export endpoint loads tools/rf_export_evidence.py, so the image
 # keeps the repository layout under /app.
-FROM python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
