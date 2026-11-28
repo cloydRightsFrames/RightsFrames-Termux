@@ -1,0 +1,6 @@
+# Atheris (libFuzzer for Python), used by the "Fuzz" workflow to run the targets in fuzz/.
+# requirements-fuzz.txt is generated from this file:
+#
+#   uv pip compile .github/scripts/requirements-fuzz.in --universal --generate-hashes \
+#     --python-version 3.12 -o .github/scripts/requirements-fuzz.txt
+atheris==3.1.0
